@@ -11,6 +11,28 @@ Design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). License: [LICENSE](LICENSE
 
 Telemetry is off: the consent banner is not shown and Zoo Code's PostHog reports are never sent.
 
+## Capabilities
+
+| Capability | Risk | Why |
+|---|---|---|
+| `process:node` | high | Runs the sidecar (Node.js), which hosts the Zoo Code extension. The sidecar is built from `sidecar/` and embedded in the plugin; Zoo Code's agent then runs the commands the user approves (or auto-approves) in Zoo Code's own UI, in the project, as it does in VS Code. |
+| `net:127.0.0.1` | medium | The plugin talks to its sidecar over a loopback WebSocket (random free port, per-install token). The plugin itself reaches nothing else; requests to LLM providers are made by the Zoo Code extension in the sidecar, to the providers the user configures. |
+| `project.read`, `editor.read`, `events`, `storage` | low | Project root, focused editor and selection for Zoo Code's editor commands; file, focus and problems events; the bridge token and the "unofficial port" notice state. |
+| `project.write`, `editor.write` (optional) | high / medium | Reserved for editing through the IDE editor; edits are written by the sidecar today, after the user approves them in Zoo Code's diff view. |
+| `clipboard` (optional) | medium | Copy and paste in the web view (Zoo Code's copy buttons). |
+
+## What the package contains
+
+- `dist/plugin.wasm`: built from `plugin/src` (Rust), with the sidecar from `sidecar/src` embedded
+  (bundled by esbuild, not minified: `npm run bundle`).
+- `webview/*.js|css|html`: this repository's page, theme bridge and toolbar.
+- `webview/zoo/`: **third-party code** — the webview UI of [Zoo Code](https://github.com/Zoo-Code-Org/Zoo-Code)
+  (Apache-2.0), the build published in its VS Code extension (minified as Zoo Code ships it), copied by
+  `scripts/copy-webview-ui.mjs` with its `LICENSE.txt`, its version in `VERSION`, and two URL rewrites
+  listed in `MODIFICATIONS.md`. It is not built from this repository: it is Zoo Code's own release.
+- The Zoo Code extension itself is **not** in the package: the sidecar loads it from the user's
+  VS Code installation.
+
 | Folder | What | Language |
 |---|---|---|
 | `plugin/` | OpenIDEA plugin: manifest, WASM bridge, web view | Rust (`wasm32-wasip2`), JS |

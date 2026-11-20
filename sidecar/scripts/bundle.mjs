@@ -19,8 +19,10 @@ await build({
   platform: "node",
   format: "esm",
   target: "node20",
-  minify: true,
-  legalComments: "eof",
+  // Readable on purpose: the package must contain no minified code that
+  // isn't plainly built from this repository (community registry rule).
+  minify: false,
+  legalComments: "inline",
   // ws loads these native accelerators when present and works without them.
   external: ["bufferutil", "utf-8-validate"],
   // CommonJS dependencies (ws) call require(); give the ES module one.

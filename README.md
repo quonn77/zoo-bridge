@@ -70,7 +70,7 @@ plugin; the harness with `?sidecar=<port>&token=<token>` drives Zoo's real UI ag
 Requirements on the machine: OpenIDEA, Node.js ≥ 20 on `PATH`, and VS Code with Zoo Code installed (the
 version the package was built for, see `webview/zoo/VERSION`; its ripgrep is used for file search).
 
-1. Settings › Plugins › *Install Plugin from Package File…* → `zoobridge.bridge-for-zoo-code-<version>.oiplugin`.
+1. Settings › Plugins › *Install Plugin from Package File…* → `quonn77.zoo-bridge-<version>.oiplugin`.
    The package is unsigned unless built with a key: the install page says so.
 2. Approve the capabilities (`process:node` runs the sidecar; `net:127.0.0.1` reaches it).
 3. Open the **Zoo Bridge** tool window, *Start extension host*, configure a provider in Zoo Code.
@@ -85,7 +85,7 @@ node scripts/package.mjs
 
 builds `dist/<id>-<version>.oiplugin`: Zoo Code's UI (copied if missing), sidecar tests and bundle
 (embedded into the WASM component), licence files, release version (dev suffix dropped, or
-`--version x.y.z`), build, pack and check. `--key <file> --publisher <id>` signs it
+`--version x.y.z`), build, pack and check. `--key <file> --publisher quonn77` signs it (the publisher is the id prefix: `quonn77` owns `quonn77.*`)
 (`openidea-plugin keygen <file>` once; keep the key secret).
 
 ## Build (development)

@@ -1,4 +1,4 @@
-id = "zoobridge.bridge-for-zoo-code"
+id = "quonn77.zoo-bridge"
 name = "Bridge for Zoo Code"
 version = "0.2.0"
 description = "Unofficial port of Zoo Code to OpenIDEA, not affiliated with, endorsed by, or maintained by Zoo Code Org. Runs the Zoo Code VS Code extension installed on this machine in a Node.js sidecar and shows its chat in a tool window."

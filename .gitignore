@@ -45,3 +45,10 @@ npm-debug.log*
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# ---- Packaging (scripts/package.mjs) ---------------------------------------------
+# Bundled sidecar embedded into the plugin, licence copies, packages
+plugin/sidecar-bundle/
+plugin/LICENSE
+plugin/NOTICE
+/dist/

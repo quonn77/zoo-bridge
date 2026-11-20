@@ -65,7 +65,30 @@ to verify in OpenIDEA.
 `cd sidecar; node scripts/fake-plugin.mjs <workspace> <data dir>` runs the sidecar against a fake
 plugin; the harness with `?sidecar=<port>&token=<token>` drives Zoo's real UI against a running sidecar.
 
-## Build
+## Install
+
+Requirements on the machine: OpenIDEA, Node.js ≥ 20 on `PATH`, and VS Code with Zoo Code installed (the
+version the package was built for, see `webview/zoo/VERSION`; its ripgrep is used for file search).
+
+1. Settings › Plugins › *Install Plugin from Package File…* → `zoobridge.bridge-for-zoo-code-<version>.oiplugin`.
+   The package is unsigned unless built with a key: the install page says so.
+2. Approve the capabilities (`process:node` runs the sidecar; `net:127.0.0.1` reaches it).
+3. Open the **Zoo Bridge** tool window, *Start extension host*, configure a provider in Zoo Code.
+
+No setting is needed: the sidecar is built into the plugin and written to its data directory.
+
+## Package
+
+```powershell
+node scripts/package.mjs
+```
+
+builds `dist/<id>-<version>.oiplugin`: Zoo Code's UI (copied if missing), sidecar tests and bundle
+(embedded into the WASM component), licence files, release version (dev suffix dropped, or
+`--version x.y.z`), build, pack and check. `--key <file> --publisher <id>` signs it
+(`openidea-plugin keygen <file>` once; keep the key secret).
+
+## Build (development)
 
 Prerequisites: Node.js ≥ 20, Rust with the `wasm32-wasip2` target, a host linker
 (Windows: Visual Studio Build Tools with *Desktop development with C++*), the `openidea-plugin` CLI.
@@ -93,8 +116,10 @@ Plugin:
 cd plugin; cargo test; openidea-plugin build; openidea-plugin link .
 ```
 
-Then in OpenIDEA: Settings › Plugins › Bridge for Zoo Code › *sidecar entry script* = absolute path of
-`sidecar/dist/main.js`, open the **Zoo Bridge** tool window, click *Start extension host*.
+Then open the **Zoo Bridge** tool window and click *Start extension host*. A build without a sidecar
+bundle (`npm run bundle` in `sidecar/` makes one) needs Settings › Plugins › Bridge for Zoo Code ›
+*sidecar entry script* = absolute path of `sidecar/dist/main.js`; setting it also overrides the bundle
+while developing the sidecar.
 
 ### Zoo Code updates
 

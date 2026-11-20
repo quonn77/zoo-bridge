@@ -2,7 +2,7 @@
   "properties": {
     "sidecarScript": {
       "type": "string",
-      "title": "Absolute path of the sidecar entry script (sidecar/dist/main.js)",
+      "title": "Development only: absolute path of a sidecar entry script (sidecar/dist/main.js). Leave empty to use the sidecar built into the plugin.",
       "default": ""
     },
     "port": {

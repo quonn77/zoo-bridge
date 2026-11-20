@@ -107,7 +107,10 @@ writeFileSync(
 
 // ---- sidecar + fake plugin ---------------------------------------------------------
 const portFile = join(dataDir, "sidecar.port");
-const child = spawn(process.execPath, [join(here, "..", "dist", "main.js")], {
+// ZOO_SIDECAR_ENTRY: test another build of the sidecar (e.g. plugin/sidecar-bundle/main.mjs).
+const entry = process.env.ZOO_SIDECAR_ENTRY || join(here, "..", "dist", "main.js");
+console.log(`sidecar: ${entry}`);
+const child = spawn(process.execPath, [entry], {
   env: { ...process.env, ZOO_TOKEN: "e2e", ZOO_PORT: "0", ZOO_PORT_FILE: portFile, ZOO_WORKSPACE: workspace, ZOO_DATA_DIR: dataDir, ZOO_EXPECTED_VERSION: "3.98.0" },
   stdio: ["ignore", "pipe", "pipe"],
 });

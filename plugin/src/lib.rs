@@ -97,12 +97,47 @@ fn status(state: &str, detail: &str) -> Result<(), Error> {
     post_to_view(&json!({ "type": "zoo-bridge/status", "state": state, "detail": detail, "notice": notice }))
 }
 
+/// The bundled sidecar (see build.rs); empty in a development build without one.
+const EMBEDDED_SIDECAR: &str = include_str!(concat!(env!("OUT_DIR"), "/sidecar.mjs"));
+const SIDECAR_FILE: &str = "sidecar.mjs";
+const SIDECAR_HASH_KEY: &str = "sidecar.hash";
+
+/// FNV-1a: tells whether the sidecar written to disk is this build's.
+fn fnv1a(text: &str) -> String {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in text.bytes() {
+        h ^= u64::from(b);
+        h = h.wrapping_mul(0x0100_0000_01b3);
+    }
+    format!("{h:016x}")
+}
+
+/// The script node runs: the `sidecarScript` setting when set (development),
+/// else the embedded sidecar, written to the plugin's data directory when it
+/// is missing or from another build.
+fn sidecar_script() -> Result<String, Error> {
+    if let Some(script) = host::setting_string("sidecarScript").filter(|s| !s.is_empty()) {
+        return Ok(script);
+    }
+    if EMBEDDED_SIDECAR.is_empty() {
+        return Err(Error::Invalid(
+            "this build has no embedded sidecar: set Settings › Plugins › Bridge for Zoo Code › sidecar entry script".into(),
+        ));
+    }
+    let path = data_path(SIDECAR_FILE)?;
+    let hash = fnv1a(EMBEDDED_SIDECAR);
+    let current = host::storage::get(SIDECAR_HASH_KEY)?.as_deref() == Some(hash.as_str()) && host::fs::stat(&path).is_ok();
+    if !current {
+        host::fs::write_file(&path, EMBEDDED_SIDECAR)?;
+        host::storage::set(SIDECAR_HASH_KEY, &hash)?;
+    }
+    Ok(path)
+}
+
 impl ZooCode {
     /// Starts the sidecar in its terminal session (focuses it when it runs).
     fn start_sidecar(&self, ctx: &Invocation) -> Result<(), Error> {
-        let script = host::setting_string("sidecarScript").filter(|s| !s.is_empty()).ok_or_else(|| {
-            Error::Invalid("set Settings › Plugins › Bridge for Zoo Code › sidecar entry script first".into())
-        })?;
+        let script = sidecar_script()?;
         let workspace = ctx.project().map(|p| p.root()).transpose()?.unwrap_or_default();
         let cmd = Command::new("node")
             .arg(&script)
@@ -427,6 +462,12 @@ register_plugin!(ZooCode, views);
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn sidecar_hash_changes_with_the_content() {
+        assert_eq!(super::fnv1a(""), "cbf29ce484222325");
+        assert_ne!(super::fnv1a("a"), super::fnv1a("b"));
+    }
+
     #[test]
     fn bundled_version_is_read_from_the_webview_copy() {
         let v = super::bundled_zoo_version();

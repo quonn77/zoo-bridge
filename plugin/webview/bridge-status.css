@@ -1,0 +1,107 @@
+/* Without a matching color-scheme the browser paints an opaque white
+   backdrop under a frame whose embedder is dark. */
+:root { color-scheme: light dark; }
+:root[data-theme="dark"] { color-scheme: dark; }
+:root[data-theme="light"] { color-scheme: light; }
+html, body { background: var(--vscode-sideBar-background, var(--openidea-bg)); }
+
+/* Our bars on top, Zoo Code's UI below them. Zoo lays its views out as
+   `position: fixed; inset: 0`, i.e. over the whole frame: a transform makes
+   #root the containing block of those fixed descendants, so they fill the
+   area below the bars instead of covering them. */
+html, body { height: 100%; margin: 0; overflow: hidden; }
+body { display: flex; flex-direction: column; }
+#zoo-bridge-toolbar, #zoo-bridge-notice, #zoo-bridge-banner { flex: none; }
+#root {
+  flex: 1 1 auto;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+  transform: translateZ(0);
+}
+
+/* Zoo Code's view title actions. */
+#zoo-bridge-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 6px;
+  border-bottom: 1px solid var(--openidea-border);
+  font-family: var(--openidea-font-ui);
+  font-size: var(--openidea-font-size);
+}
+.zoo-bridge-toolbar-title { flex: 1; color: var(--openidea-fg-muted); padding-left: 4px; }
+.zoo-bridge-toolbar-sep { width: 1px; height: 16px; margin: 0 4px; background: var(--openidea-border); }
+#zoo-bridge-toolbar button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 24px;
+  background: none;
+  border: 0;
+  border-radius: 4px;
+  color: var(--openidea-fg);
+  cursor: pointer;
+  padding: 0;
+}
+#zoo-bridge-toolbar button:hover:not(:disabled) { background: var(--openidea-bg-hover); }
+#zoo-bridge-toolbar button:focus-visible { outline: 1px solid var(--openidea-focus-ring); }
+#zoo-bridge-toolbar button:disabled { opacity: 0.4; cursor: default; }
+
+/* "Unofficial port" line, until the user hides it (kept in the plugin's storage). */
+#zoo-bridge-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--openidea-border);
+  color: var(--openidea-fg-muted);
+  font-family: var(--openidea-font-ui);
+  font-size: calc(var(--openidea-font-size, 13px) - 1px);
+}
+#zoo-bridge-notice[hidden] { display: none; }
+.zoo-bridge-notice-text { flex: 1; min-width: 0; }
+.zoo-bridge-notice-text strong { color: var(--openidea-fg); font-weight: 600; }
+.zoo-bridge-notice-close {
+  flex: none;
+  background: none;
+  border: 0;
+  border-radius: 4px;
+  color: var(--openidea-fg-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 15px;
+  line-height: 1;
+  padding: 2px 6px;
+}
+.zoo-bridge-notice-close:hover { background: var(--openidea-bg-hover); color: var(--openidea-fg); }
+
+/* Shown only while the extension host is not connected. */
+#zoo-bridge-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--openidea-border);
+  background: var(--openidea-bg-elevated);
+  color: var(--openidea-fg);
+  font-family: var(--openidea-font-ui);
+  font-size: var(--openidea-font-size);
+}
+#zoo-bridge-banner[hidden] { display: none; }
+.zoo-bridge-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--openidea-fg-muted); }
+#zoo-bridge-banner[data-state="offline"] .zoo-bridge-dot,
+#zoo-bridge-banner[data-state="disconnected"] .zoo-bridge-dot { background: var(--openidea-danger); }
+#zoo-bridge-banner[data-state="starting"] .zoo-bridge-dot { background: var(--openidea-warning); }
+.zoo-bridge-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.zoo-bridge-start {
+  flex: none;
+  background: var(--openidea-accent);
+  color: var(--openidea-fg-on-accent);
+  border: 0;
+  border-radius: 4px;
+  padding: 3px 10px;
+  cursor: pointer;
+  font: inherit;
+}

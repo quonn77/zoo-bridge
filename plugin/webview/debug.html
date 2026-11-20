@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bridge for Zoo Code — debug</title>
+  <!-- Bridge diagnostics: the lot 1 page. To use it, point the view's `web`
+       in plugin.toml at webview/debug.html and reopen the tool window. -->
+  <script src="./vscode-shim.js"></script>
+  <style>
+    :root { color-scheme: light dark; background: var(--openidea-bg); }
+    :root[data-theme="dark"] { color-scheme: dark; }
+    :root[data-theme="light"] { color-scheme: light; }
+    body { margin: 0; padding: 12px; font-family: var(--openidea-font-ui); background: var(--openidea-bg); color: var(--openidea-fg); }
+    .bar { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--openidea-fg-muted); }
+    .dot.connected { background: var(--openidea-success); }
+    .dot.offline, .dot.disconnected { background: var(--openidea-danger); }
+    .dot.starting { background: var(--openidea-warning); }
+    button { background: var(--openidea-accent); color: var(--openidea-fg-on-accent); border: 0; border-radius: 4px; padding: 4px 10px; cursor: pointer; font: inherit; }
+    pre { background: var(--openidea-bg-elevated); border: 1px solid var(--openidea-border); border-radius: 4px; padding: 8px; max-height: 60vh; overflow: auto; font-family: var(--openidea-font-mono); font-size: 12px; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <div class="bar">
+    <span id="dot" class="dot"></span>
+    <span id="state">connecting…</span>
+    <button id="start" hidden>Start extension host</button>
+  </div>
+  <pre id="log"></pre>
+  <script src="./bridge-placeholder.js"></script>
+</body>
+</html>

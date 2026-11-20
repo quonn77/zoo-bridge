@@ -1,0 +1,26 @@
+Bridge for Zoo Code (zoocode-openidea-plugin)
+Copyright 2026 The zoocode-openidea-plugin contributors
+
+An unofficial port of Zoo Code to OpenIDEA. Not affiliated with, endorsed by,
+or maintained by Zoo Code Org. "Zoo Code" is used only to describe what this
+product works with and where the work comes from.
+
+This product redistributes, in plugin/webview/zoo/, the webview UI build of
+Zoo Code (https://github.com/Zoo-Code-Org/Zoo-Code), licensed under the
+Apache License 2.0 (plugin/webview/zoo/LICENSE.txt). Two of its files are
+modified (see plugin/webview/zoo/MODIFICATIONS.md).
+
+At run time the sidecar loads the Zoo Code VS Code extension from the user's
+own installation; that extension is not redistributed with this product.
+
+The architecture was informed by Zoo Code for JetBrains
+(https://github.com/Zoo-Code-Org/Zoo-Code-Jetbrains, Apache License 2.0,
+Copyright 2009-2025 Weibo, Inc.); no code of it is included.
+
+This product includes software developed by Microsoft Corporation:
+vscode-uri (MIT License, https://github.com/microsoft/vscode-uri).
+
+This product includes ws (MIT License, https://github.com/websockets/ws).
+
+This product uses the OpenIDEA plugin SDK
+(https://github.com/l0ng-ai/openidea, Apache License 2.0).

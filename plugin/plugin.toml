@@ -1,0 +1,90 @@
+id = "zoobridge.bridge-for-zoo-code"
+name = "Bridge for Zoo Code"
+version = "0.2.0-dev.1795188088"
+description = "Unofficial port of Zoo Code to OpenIDEA, not affiliated with, endorsed by, or maintained by Zoo Code Org. Runs the Zoo Code VS Code extension installed on this machine in a Node.js sidecar and shows its chat in a tool window."
+authors = ["The zoocode-openidea-plugin contributors"]
+license = "Apache-2.0"
+change-notes = "0.2.0 — Zoo Code's own UI and extension in the tool window, IDE file dialogs, telemetry off. 0.1.0 — scaffold: tool window web view, Node sidecar started in a terminal session, WebSocket bridge."
+categories = ["ai", "tools"]
+engines.openidea = "^1.10"
+wasm = "dist/plugin.wasm"
+activation = ["on-view:chat", "on-command:*", "on-event:websocket-ready"]
+
+[capabilities]
+# process:node   → the sidecar (Zoo Code extension host) runs on the system Node.js.
+# net:127.0.0.1  → loopback WebSocket between this plugin and the sidecar.
+required = ["process:node", "net:127.0.0.1", "events", "storage", "project.read", "editor.read"]
+# Used once the editor bridge (lot 4) lands.
+optional = ["editor.write", "project.write", "clipboard"]
+
+[[contributes.views]]
+id = "chat"
+title = "Zoo Bridge"
+icon = "icons/zoo.svg"
+location = "right"
+web = "webview/index.html"
+
+[[contributes.commands]]
+id = "start-sidecar"
+title = "Zoo Bridge: Start Extension Host"
+category = "Zoo Bridge"
+
+[[contributes.commands]]
+id = "stop-sidecar"
+title = "Zoo Bridge: Stop Extension Host"
+category = "Zoo Bridge"
+
+[[contributes.commands]]
+id = "new-task"
+title = "Zoo Bridge: New Task"
+category = "Zoo Bridge"
+
+[[contributes.commands]]
+id = "history"
+title = "Zoo Bridge: History"
+category = "Zoo Bridge"
+
+[[contributes.commands]]
+id = "settings"
+title = "Zoo Bridge: Settings"
+category = "Zoo Bridge"
+
+[[contributes.commands]]
+id = "add-to-context"
+title = "Zoo Bridge: Add to Context"
+category = "Zoo Bridge"
+
+[[contributes.commands]]
+id = "explain-code"
+title = "Zoo Bridge: Explain Code"
+category = "Zoo Bridge"
+
+[[contributes.commands]]
+id = "fix-code"
+title = "Zoo Bridge: Fix Code"
+category = "Zoo Bridge"
+
+[[contributes.commands]]
+id = "improve-code"
+title = "Zoo Bridge: Improve Code"
+category = "Zoo Bridge"
+
+[[contributes.menus]]
+menu = "editor.context"
+command = "add-to-context"
+
+[[contributes.menus]]
+menu = "editor.context"
+command = "explain-code"
+
+[[contributes.menus]]
+menu = "editor.context"
+command = "fix-code"
+
+[[contributes.menus]]
+menu = "editor.context"
+command = "improve-code"
+
+[contributes.settings]
+title = "Bridge for Zoo Code"
+schema = "settings.schema.json"

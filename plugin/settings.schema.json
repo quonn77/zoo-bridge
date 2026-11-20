@@ -1,0 +1,14 @@
+{
+  "properties": {
+    "sidecarScript": {
+      "type": "string",
+      "title": "Absolute path of the sidecar entry script (sidecar/dist/main.js)",
+      "default": ""
+    },
+    "port": {
+      "type": "number",
+      "title": "Loopback port of the sidecar WebSocket (0 = any free port)",
+      "default": 0
+    }
+  }
+}

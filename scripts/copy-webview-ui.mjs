@@ -97,7 +97,7 @@ writeFileSync(
   `# Modifications to the Zoo Code webview UI
 
 Copied from Zoo Code ${pkg.version} (Apache License 2.0, see LICENSE.txt) by
-scripts/copy-webview-ui.mjs of zoocode-openidea-plugin. Source maps are left
+scripts/copy-webview-ui.mjs of zoo-bridge (github.com/quonn77/zoo-bridge). Source maps are left
 out. These files were changed so the UI loads from an OpenIDEA web view
 package, where root-absolute URLs ("/assets/…") resolve outside the package:
 

@@ -1,6 +1,6 @@
 # Bridge for Zoo Code
 
-> **Bridge for Zoo Code** (repository `zoocode-openidea-plugin`) is an unofficial port of [Zoo Code](https://github.com/Zoo-Code-Org/Zoo-Code) to
+> **Bridge for Zoo Code** (repository [`quonn77/zoo-bridge`](https://github.com/quonn77/zoo-bridge)) is an unofficial port of [Zoo Code](https://github.com/Zoo-Code-Org/Zoo-Code) to
 > [OpenIDEA](https://github.com/l0ng-ai/openidea), licensed under the Apache License 2.0.
 > It is not affiliated with, endorsed by, or maintained by Zoo Code Org.
 

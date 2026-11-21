@@ -98,6 +98,40 @@ test("a new file's diff has no left side", async () => {
   assert.equal(existsSync(uri.fsPath), false, "not written before save");
 });
 
+// Review of PR l0ng-ai/openidea-plugins#294: editor commands (Add to Context,
+// Explain/Fix/Improve) must see the editor's text, not the file on disk.
+test("editor commands see unsaved editor text, without saving it", () => {
+  const { root, api, vs } = setup();
+  const file = join(root, "code.ts");
+  writeFileSync(file, "let x = old_value;\n");
+  vs.setActiveEditor(file, [0, 8, 0, 17], "let x = new_value;\n");
+  const ed = api.window.activeTextEditor;
+  assert.equal(ed.document.getText(ed.selection), "new_value");
+  assert.equal(ed.document.isDirty, true);
+  assert.equal(readFileSync(file, "utf8"), "let x = old_value;\n", "unsaved changes stay unsaved");
+});
+
+test("editor commands see content that exists only in the editor (empty file on disk)", () => {
+  const { root, api, vs } = setup();
+  const file = join(root, "empty.ts");
+  writeFileSync(file, "");
+  vs.setActiveEditor(file, [0, 0, 0, 9], "new_value\n");
+  const ed = api.window.activeTextEditor;
+  assert.equal(ed.document.getText(ed.selection), "new_value");
+  assert.equal(ed.document.isDirty, true);
+  assert.equal(readFileSync(file, "utf8"), "");
+});
+
+test("a saved file's editor text leaves the document clean", () => {
+  const { root, api, vs } = setup();
+  const file = join(root, "saved.ts");
+  writeFileSync(file, "let x = new_value;\n");
+  vs.setActiveEditor(file, [0, 8, 0, 17], "let x = new_value;\n");
+  const ed = api.window.activeTextEditor;
+  assert.equal(ed.document.getText(ed.selection), "new_value");
+  assert.equal(ed.document.isDirty, false);
+});
+
 test("diagnostics come from the IDE snapshot", () => {
   const { root, api, vs } = setup();
   const file = join(root, "B.java");

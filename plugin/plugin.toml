@@ -1,10 +1,10 @@
 id = "quonn77.zoo-bridge"
 name = "Bridge for Zoo Code"
-version = "0.2.0"
+version = "0.2.1"
 description = "Unofficial port of Zoo Code to OpenIDEA, not affiliated with, endorsed by, or maintained by Zoo Code Org. Runs the Zoo Code VS Code extension installed on this machine in a Node.js sidecar and shows its chat in a tool window."
 authors = ["The zoo-bridge contributors"]
 license = "Apache-2.0"
-change-notes = "0.2.0 — Zoo Code's own UI and extension in the tool window, IDE file dialogs, telemetry off. 0.1.0 — scaffold: tool window web view, Node sidecar started in a terminal session, WebSocket bridge."
+change-notes = "0.2.1 — Add to Context and Explain / Fix / Improve Code use the editor's text, unsaved changes included, instead of the file on disk. 0.2.0 — Zoo Code's own UI and extension in the tool window, IDE file dialogs, telemetry off. 0.1.0 — scaffold: tool window web view, Node sidecar started in a terminal session, WebSocket bridge."
 categories = ["ai", "tools"]
 engines.openidea = "^1.10"
 wasm = "dist/plugin.wasm"

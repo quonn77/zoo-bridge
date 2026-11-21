@@ -339,11 +339,10 @@ export class ExtensionHost {
   async runCommand(id: string, args: unknown): Promise<unknown> {
     const cmd = this.vscode?.commands.get(id);
     if (!cmd) throw new Error(`unknown command ${id}`);
-    const editor = (args as { editor?: { path?: string; selection?: number[] } } | null)?.editor;
-    if (editor?.path) {
-      this.vscode.setActiveEditor(editor.path, editor.selection);
-      return cmd();
-    }
+    const editor = (args as { editor?: { path?: string; selection?: number[]; text?: string } } | null)?.editor;
+    // The editor's text, not the file on disk: the selection refers to it,
+    // and it may hold unsaved changes (or the only copy of the content).
+    if (editor?.path) this.vscode.setActiveEditor(editor.path, editor.selection, editor.text);
     return cmd();
   }
 

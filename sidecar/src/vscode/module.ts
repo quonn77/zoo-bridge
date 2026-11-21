@@ -187,8 +187,12 @@ export interface VscodeModule {
   api: Record<string, unknown>;
   webviewViews: Map<string, WebviewViewRegistration>;
   commands: Map<string, (...args: unknown[]) => unknown>;
-  /** The focused editor changed (path, or none), with its selection [startLine, startChar, endLine, endChar]. */
-  setActiveEditor(path: string | null, selection?: number[]): void;
+  /**
+   * The focused editor changed (path, or none), with its selection
+   * [startLine, startChar, endLine, endChar] and, when known, the editor's
+   * text (unsaved changes included), which then replaces the disk content.
+   */
+  setActiveEditor(path: string | null, selection?: number[], text?: string): void;
   /** The IDE's problems of all files (replaces the snapshot). */
   setProblems(byPath: Record<string, { range: number[]; severity: number; message: string; source?: string; code?: string }[]>): void;
   /** Files changed on disk outside the extension. */
@@ -794,13 +798,14 @@ export function createVscode(host: Host): VscodeModule {
     api: namespace("vscode", api),
     webviewViews,
     commands,
-    setActiveEditor(path, selection) {
+    setActiveEditor(path, selection, text) {
       if (!path) {
         activeEditor = undefined;
         onDidChangeActiveTextEditor.fire(undefined);
         return;
       }
-      const doc = documents.open(URI.file(path));
+      const uri = URI.file(path);
+      const doc = typeof text === "string" ? documents.syncFromEditor(uri, text) : documents.open(uri);
       if (!tabGroup.tabs.some((t) => tabUri(t)?.toString() === doc.uri.toString())) addTab(Utils.basename(doc.uri), new T.TabInputText(doc.uri));
       const [sl, sc, el, ec] = selection && selection.length === 4 ? selection : [0, 0, 0, 0];
       showEditor(doc, new T.Selection(sl, sc, el, ec));

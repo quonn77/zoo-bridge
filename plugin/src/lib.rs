@@ -92,6 +92,21 @@ pub fn bundled_zoo_version() -> &'static str {
     VERSION_FILE.split_whitespace().nth(1).unwrap_or("")
 }
 
+/// The `editor` argument of Zoo Code's editor commands: path, first
+/// selection, and the document as the editor holds it (text and version),
+/// which may differ from the file on disk when it has unsaved changes.
+fn editor_context(editor: &openidea_plugin::TextEditor) -> Result<Value, Error> {
+    let doc = editor.document()?;
+    let selection = editor
+        .selections()?
+        .into_iter()
+        .next()
+        .map(|r| json!([r.start.line, r.start.character, r.end.line, r.end.character]));
+    Ok(json!({
+        "editor": { "path": editor.path(), "selection": selection, "text": doc.text, "version": doc.version }
+    }))
+}
+
 fn status(state: &str, detail: &str) -> Result<(), Error> {
     let notice = host::storage::get(NOTICE_HIDDEN_KEY).ok().flatten().is_none();
     post_to_view(&json!({ "type": "zoo-bridge/status", "state": state, "detail": detail, "notice": notice }))
@@ -402,12 +417,11 @@ impl Plugin for ZooCode {
                     "fix-code" => "zoo-code.fixCode",
                     _ => "zoo-code.improveCode",
                 };
-                // Zoo Code reads the file and selection from its active editor.
+                // Zoo Code reads the file and selection from its active editor:
+                // send the editor's own text (unsaved changes included), not
+                // just its path, so the selection refers to what the user sees.
                 let editor = ctx.editor().ok_or_else(|| Error::Invalid("focus an editor first".into()))?;
-                let selection = editor.selections()?.into_iter().next().map(|r| {
-                    json!([r.start.line, r.start.character, r.end.line, r.end.character])
-                });
-                self.zoo_command(zoo, json!({ "editor": { "path": editor.path(), "selection": selection } }), ctx)
+                self.zoo_command(zoo, editor_context(&editor)?, ctx)
             }
             _ => Err(Error::NotFound(format!("command {id}"))),
         }
@@ -462,6 +476,24 @@ register_plugin!(ZooCode, views);
 
 #[cfg(test)]
 mod tests {
+    /// Review of PR l0ng-ai/openidea-plugins#294: editor commands must carry
+    /// the editor's text, which may be unsaved and differ from the disk.
+    #[test]
+    fn editor_commands_carry_the_editors_unsaved_text() {
+        use openidea_plugin::mock::MockHost;
+        let host = MockHost::install().with_capabilities(&["editor.read"]);
+        host.open_editor("/project/code.ts", "typescript", "let x = old_value;\n", &[(0, 8, 0, 17)]);
+        host.type_in_editor("// unsaved\n");
+        let ctx = host.invocation();
+        let editor = ctx.editor().expect("focused editor");
+        let v = super::editor_context(&editor).expect("context");
+        let e = &v["editor"];
+        assert_eq!(e["path"], "/project/code.ts");
+        assert_eq!(e["text"], "let x = old_value;\n// unsaved\n");
+        assert_eq!(e["version"], 2);
+        assert_eq!(e["selection"], serde_json::json!([0, 8, 0, 17]));
+    }
+
     #[test]
     fn sidecar_hash_changes_with_the_content() {
         assert_eq!(super::fnv1a(""), "cbf29ce484222325");

@@ -14,7 +14,8 @@
     "start": "node dist/main.js",
     "test": "tsc -p . && node --test \"dist/test/**/*.test.js\"",
     "e2e": "tsc -p . && node scripts/e2e-execute.mjs",
-    "bundle": "node scripts/bundle.mjs"
+    "bundle": "node scripts/bundle.mjs",
+    "e2e:context": "tsc -p . && node scripts/e2e-editor-context.mjs"
   },
   "dependencies": {
     "vscode-uri": "^3.1.0",

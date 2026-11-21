@@ -197,6 +197,20 @@ export class Documents {
     return this.track(new TextDocument(uri, content, language));
   }
 
+  /**
+   * The document as the IDE's editor holds it: `text` replaces the in-memory
+   * content (unsaved changes included) and the document is dirty when it
+   * differs from the file on disk. Nothing is written: the user's unsaved
+   * changes stay unsaved.
+   */
+  syncFromEditor(uri: URI, text: string): TextDocument {
+    const doc = this.open(uri);
+    if (doc.getText() !== text) doc.setText(text);
+    const disk = uri.scheme === "file" && existsSync(uri.fsPath) ? readFileSync(uri.fsPath, "utf8") : undefined;
+    doc.isDirty = disk !== text;
+    return doc;
+  }
+
   /** Reloads a document from disk, dropping unsaved changes (`workbench.action.files.revert`). */
   revert(doc: TextDocument): void {
     if (doc.uri.scheme === "file" && existsSync(doc.uri.fsPath)) doc.setText(readFileSync(doc.uri.fsPath, "utf8"));

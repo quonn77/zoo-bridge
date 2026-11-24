@@ -107,6 +107,16 @@ pub fn pinned_vsix() -> Option<(String, String)> {
     (url.starts_with("https://") && sha256.len() == 64 && sha256.bytes().all(|b| b.is_ascii_hexdigit())).then_some((url, sha256))
 }
 
+/// The ripgrep release the sidecar may download for Zoo Code's file search
+/// when neither VS Code nor PATH has one (`ripgrep.json`: one archive per
+/// platform with its SHA-256), as compact JSON for `ZOO_RIPGREP`.
+pub fn pinned_ripgrep() -> Option<String> {
+    const PIN: &str = include_str!("../ripgrep.json");
+    let pin: Value = serde_json::from_str(PIN).ok()?;
+    pin.get("assets")?.as_object()?;
+    serde_json::to_string(&pin).ok()
+}
+
 /// The `editor` argument of Zoo Code's editor commands: path, first
 /// selection, and the document as the editor holds it (text and version),
 /// which may differ from the file on disk when it has unsaved changes.
@@ -181,6 +191,10 @@ impl ZooCode {
         // Where the extension comes from: see sidecar/src/extension.ts.
         let cmd = match pinned_vsix() {
             Some((url, sha256)) => cmd.env("ZOO_VSIX_URL", &url).env("ZOO_VSIX_SHA256", &sha256),
+            None => cmd,
+        };
+        let cmd = match pinned_ripgrep() {
+            Some(pin) => cmd.env("ZOO_RIPGREP", &pin),
             None => cmd,
         };
         let cmd = match host::setting_string("zooExtension").filter(|s| !s.is_empty()) {
@@ -503,6 +517,17 @@ mod tests {
     /// A release must pin the VSIX of the very Zoo Code version whose UI it
     /// bundles, or the sidecar has nothing to download (copy the UI from the
     /// release .vsix: scripts/copy-webview-ui.mjs writes both).
+    #[test]
+    fn the_ripgrep_pin_covers_the_desktop_platforms() {
+        let pin: serde_json::Value = serde_json::from_str(&super::pinned_ripgrep().expect("ripgrep.json")).unwrap();
+        for platform in ["win32-x64", "win32-arm64", "linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64"] {
+            let a = &pin["assets"][platform];
+            assert!(a["url"].as_str().is_some_and(|u| u.starts_with("https://github.com/BurntSushi/ripgrep/releases/download/")), "{platform}");
+            assert_eq!(a["sha256"].as_str().map(str::len), Some(64), "{platform}");
+            assert!(a["file"].as_str().is_some_and(|f| f.ends_with("/rg") || f.ends_with("/rg.exe")), "{platform}");
+        }
+    }
+
     #[test]
     fn the_pinned_vsix_is_the_bundled_ui_version() {
         let (url, sha256) = super::pinned_vsix().expect("zoo-code.json pins the bundled UI's version");

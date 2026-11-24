@@ -4,8 +4,11 @@
 // version of the bundled UI and its pinned release VSIX), ZOO_EXTENSION (the
 // zooExtension setting: an extension folder or a .vsix; ZOO_EXTENSION_DIR is
 // the older name), ZOO_AUTO_DOWNLOAD=1 (download without asking: tests),
-// ZOO_LANGUAGE, ZOO_APP_ROOT (where node_modules/@vscode/ripgrep is).
-// See extension.ts for where the extension comes from.
+// ZOO_RIPGREP (the pinned ripgrep release, plugin/ripgrep.json), ZOO_APP_ROOT
+// (where node_modules/@vscode/ripgrep is), ZOO_NO_VSCODE=1 (never use VS Code's
+// extension or ripgrep: tests), ZOO_LANGUAGE.
+// See extension.ts and ripgrep.ts for where the extension and ripgrep come from;
+// the page's zoo-bridge/download message downloads whatever is missing.
 
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -13,6 +16,7 @@ import { dirname, join } from "node:path";
 import { Bridge } from "./bridge.js";
 import { downloadExtension, pruneCache, readPinned, resolveExtension, type ExtensionSource, type PinnedVsix } from "./extension.js";
 import { ExtensionHost } from "./host.js";
+import { downloadRipgrep, readRipgrepPin, resolveRipgrep, type RipgrepResolution } from "./ripgrep.js";
 
 // 0 = any free loopback port (fixed ports may be reserved on the machine);
 // the bound port is written to ZOO_PORT_FILE, where the plugin reads it.
@@ -36,6 +40,9 @@ const pinned = readPinned();
 const setting = process.env.ZOO_EXTENSION || process.env.ZOO_EXTENSION_DIR || undefined;
 const cacheDir = join(dataDir, "extensions");
 const autoDownload = process.env.ZOO_AUTO_DOWNLOAD === "1";
+const skipVscode = process.env.ZOO_NO_VSCODE === "1";
+const ripgrepPin = readRipgrepPin();
+const ripgrepDir = join(dataDir, "ripgrep");
 
 const bridge = new Bridge({ port, token });
 let host: ExtensionHost | undefined;
@@ -44,6 +51,56 @@ const pending: unknown[] = [];
 /** What the page shows about the extension (zoo-bridge/extension), repeated on reconnect. */
 let extensionState: Record<string, unknown> = { state: "resolving" };
 let downloading = false;
+let ripgrep: RipgrepResolution | undefined;
+let ripgrepState: Record<string, unknown> = { state: "resolving" };
+let ripgrepDownloading = false;
+
+function setRipgrepState(s: Record<string, unknown>): void {
+  ripgrepState = s;
+  bridge.postToWebview({ type: "zoo-bridge/ripgrep", ...s });
+}
+
+/** Where Zoo Code finds ripgrep; see ripgrep.ts. Reported to the page. */
+function findRipgrep(): RipgrepResolution {
+  const r = resolveRipgrep({ cacheDir: ripgrepDir, pin: ripgrepPin, skipVscode });
+  if (r.ready) {
+    console.log(`[zoo] ripgrep (${r.source}): ${r.appRoot}`);
+    setRipgrepState({ state: "ready", source: r.source });
+  } else if (r.asset) {
+    console.log(`[zoo] ripgrep is not on this machine: waiting for the user to allow the download of ripgrep ${r.version} (${r.asset.url})`);
+    setRipgrepState({ state: "missing", version: r.version, url: r.asset.url });
+  } else {
+    console.warn(`[zoo] ripgrep not found and no release for ${process.platform}-${process.arch}: Zoo Code's file search and listing will fail (install ripgrep on PATH)`);
+    setRipgrepState({ state: "unavailable" });
+  }
+  return r;
+}
+
+async function downloadRg(): Promise<void> {
+  const r = ripgrep;
+  if (!r || r.ready || !r.asset || !r.version || ripgrepDownloading) return;
+  ripgrepDownloading = true;
+  console.log(`[zoo] downloading ripgrep ${r.version} from ${r.asset.url}`);
+  setRipgrepState({ state: "downloading", version: r.version, url: r.asset.url });
+  try {
+    await downloadRipgrep(r.asset, r.version, ripgrepDir);
+    // Same appRoot: Zoo Code finds the binary on its next search.
+    ripgrep = { appRoot: r.appRoot, source: "download", ready: true };
+    console.log(`[zoo] ripgrep ${r.version} installed in ${r.appRoot}`);
+    setRipgrepState({ state: "ready", source: "download", version: r.version });
+  } catch (e) {
+    const error = (e as Error).message;
+    console.error(`[zoo] ${error}`);
+    setRipgrepState({ state: "failed", version: r.version, url: r.asset.url, error });
+  } finally {
+    ripgrepDownloading = false;
+  }
+}
+
+/** The page's zoo-bridge/download (the user agreed), or ZOO_AUTO_DOWNLOAD: whatever is missing. */
+async function downloadMissing(): Promise<void> {
+  await Promise.all([downloadRg(), pinned && !host ? download(pinned) : undefined]);
+}
 
 function setExtensionState(s: Record<string, unknown>): void {
   extensionState = s;
@@ -53,7 +110,7 @@ function setExtensionState(s: Record<string, unknown>): void {
 async function startHost(dir: string, source: ExtensionSource): Promise<void> {
   console.log(`[zoo] extension (${source}): ${dir}`);
   if (source === "cache" || source === "download") pruneCache(cacheDir, dir);
-  const h = new ExtensionHost({ bridge, workspaceRoot: workspace, dataDir, extensionDir: dir, expectedVersion });
+  const h = new ExtensionHost({ bridge, workspaceRoot: workspace, dataDir, extensionDir: dir, expectedVersion, appRoot: ripgrep?.appRoot });
   host = h;
   setExtensionState({ state: "ready", source, version: h.version });
   for (const msg of pending.splice(0)) h.fromWebview(msg);
@@ -82,12 +139,13 @@ async function download(p: PinnedVsix): Promise<void> {
 bridge.on("connected", () => {
   console.log("[zoo] plugin connected");
   if (!host) bridge.postToWebview({ type: "zoo-bridge/extension", ...extensionState });
+  bridge.postToWebview({ type: "zoo-bridge/ripgrep", ...ripgrepState });
 });
 bridge.on("disconnected", () => console.log("[zoo] plugin disconnected (waiting for the next instance)"));
 bridge.on("webview", (msg) => {
   const type = (msg as { type?: unknown } | null)?.type;
-  if (type === "zoo-bridge/download-extension") {
-    if (pinned && !host) void download(pinned);
+  if (type === "zoo-bridge/download") {
+    void downloadMissing();
     return;
   }
   if (host) host.fromWebview(msg);
@@ -124,14 +182,16 @@ bridge
     console.log(`[zoo] Zoo Code sidecar listening on ws://127.0.0.1:${bridge.port}/bridge (workspace ${workspace})`);
     let found: Awaited<ReturnType<typeof resolveExtension>>;
     try {
-      found = await resolveExtension({ setting, expectedVersion, pinned, cacheDir });
+      ripgrep = findRipgrep();
+      found = await resolveExtension({ setting, expectedVersion, pinned, cacheDir, vscodeExtensionsDir: skipVscode ? join(dataDir, "no-vscode") : undefined });
+      if ("dir" in found && autoDownload) await downloadRg();
       if ("dir" in found) return await startHost(found.dir, found.source);
     } catch (e) {
       // Tell the page instead of leaving it on "resolving".
       setExtensionState({ state: "failed", error: (e as Error).message });
       throw e;
     }
-    if (found.pinned && autoDownload) await download(found.pinned);
+    if (found.pinned && autoDownload) await downloadMissing();
     else if (found.pinned) {
       console.log(`[zoo] Zoo Code ${found.pinned.version} is not on this machine: waiting for the user to allow the download (${found.pinned.url})`);
       setExtensionState({ state: "missing", version: found.pinned.version, url: found.pinned.url });

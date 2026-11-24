@@ -92,9 +92,16 @@ plugin; the harness with `?sidecar=<port>&token=<token>` drives Zoo's real UI ag
 
 ## Install
 
-Requirements on the machine: OpenIDEA and Node.js ≥ 20 on `PATH`. VS Code is optional: with Zoo Code
-of the version the package was built for (`webview/zoo/VERSION`) its extension is used, otherwise
-the plugin downloads it (see below). VS Code's ripgrep is still used for Zoo's file search and listing.
+Requirements on the machine: OpenIDEA and Node.js ≥ 20 on `PATH`. VS Code is optional: when it has
+Zoo Code of the version the package was built for (`webview/zoo/VERSION`), that extension and VS Code's
+ripgrep are used; otherwise the plugin downloads what is missing, once you agree (see below).
+
+1. Settings › Plugins › *Install Plugin from Package File…* → `quonn77.zoo-bridge-<version>.oiplugin`.
+   The package is unsigned unless built with a key: the install page says so.
+2. Approve the capabilities (`process:node` runs the sidecar; `net:127.0.0.1` reaches it).
+3. Open the **Zoo Bridge** tool window, *Start extension host*, configure a provider in Zoo Code.
+
+No setting is needed: the sidecar is built into the plugin and written to its data directory.
 
 ### Where the extension comes from
 
@@ -109,15 +116,26 @@ The sidecar looks for the Zoo Code extension in this order (`sidecar/src/extensi
    window. It is used only if its SHA-256 is the pinned one; it is then extracted (only its
    `extension/` folder, refusing unsafe paths) into the cache and older cached versions are removed.
 
-The download is made by the sidecar (Node.js), not through the plugin's `net` capability. Behind a
-proxy that Node.js does not use, download the `.vsix` yourself and set it as *Zoo Code extension*.
+### Where ripgrep comes from
 
-1. Settings › Plugins › *Install Plugin from Package File…* → `quonn77.zoo-bridge-<version>.oiplugin`.
-   The package is unsigned unless built with a key: the install page says so.
-2. Approve the capabilities (`process:node` runs the sidecar; `net:127.0.0.1` reaches it).
-3. Open the **Zoo Bridge** tool window, *Start extension host*, configure a provider in Zoo Code.
+Zoo Code searches and lists files with [ripgrep](https://github.com/BurntSushi/ripgrep), which it runs
+from `vscode.env.appRoot` (`node_modules/@vscode/ripgrep/bin/`), as VS Code ships it; it never looks
+on `PATH`. The sidecar gives it an appRoot, in this order (`sidecar/src/ripgrep.ts`):
 
-No setting is needed: the sidecar is built into the plugin and written to its data directory.
+1. `ZOO_APP_ROOT` (development).
+2. A VS Code installation, with its own ripgrep.
+3. The plugin's cache (`zoo-data/ripgrep/`), filled by 4 or 5.
+4. `rg` on `PATH`, copied into the cache.
+5. The official ripgrep release pinned in `plugin/ripgrep.json` (one archive per platform: Windows,
+   Linux and macOS, x64 and arm64, with its SHA-256), downloaded **only after the user agrees**,
+   together with the extension when both are missing. Only the `rg` binary is taken from the
+   archive, and only if the archive's SHA-256 is the pinned one. ripgrep is MIT / Unlicense.
+
+Zoo Code looks ripgrep up on every search, so a download takes effect without a restart.
+
+The downloads are made by the sidecar (Node.js), not through the plugin's `net` capability. Behind a
+proxy that Node.js does not use, download the `.vsix` yourself and set it as *Zoo Code extension*,
+and put `rg` on `PATH`.
 
 ## Package
 
@@ -187,6 +205,8 @@ VS Code APIs the sidecar does not emulate yet.
 
 `npm run e2e` and `npm run e2e:context` use the pinned version: Zoo Code of that version in VS Code,
 `ZOO_EXTENSION` (an extension folder or `.vsix`), or else a download of the pinned `.vsix`.
+`npm run e2e:search` runs Zoo's `search_files` and `list_files` without VS Code (`ZOO_NO_VSCODE=1`),
+with ripgrep from `PATH`, the cache or the pinned release.
 
 What needs what after a change:
 

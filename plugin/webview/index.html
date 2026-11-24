@@ -40,6 +40,19 @@
     <span class="zoo-bridge-text">Connecting to the Zoo Code extension host…</span>
     <button type="button" class="zoo-bridge-start" hidden>Start extension host</button>
   </div>
+  <!-- What the sidecar is missing (the Zoo Code extension, ripgrep) and the
+       user's consent to download it: bridge-status.js. -->
+  <div id="zoo-bridge-deps" role="region" aria-label="Zoo Code setup" aria-live="polite" hidden>
+    <div class="zbd-text">
+      <strong class="zbd-title"></strong>
+      <span class="zbd-body"></span>
+    </div>
+    <div class="zbd-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" hidden><div class="zbd-bar"></div></div>
+    <div class="zbd-actions">
+      <button type="button" class="zbd-download"></button>
+      <button type="button" class="zbd-later">Not now</button>
+    </div>
+  </div>
   <div id="root"></div>
   <script src="./bridge-status.js"></script>
   <script type="module" src="./zoo/webview-ui/build/assets/index.js"></script>

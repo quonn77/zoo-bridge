@@ -68,7 +68,7 @@ function findRipgrep(): RipgrepResolution {
     setRipgrepState({ state: "ready", source: r.source });
   } else if (r.asset) {
     console.log(`[zoo] ripgrep is not on this machine: waiting for the user to allow the download of ripgrep ${r.version} (${r.asset.url})`);
-    setRipgrepState({ state: "missing", version: r.version, url: r.asset.url });
+    setRipgrepState({ state: "missing", version: r.version, url: r.asset.url, size: r.asset.size });
   } else {
     console.warn(`[zoo] ripgrep not found and no release for ${process.platform}-${process.arch}: Zoo Code's file search and listing will fail (install ripgrep on PATH)`);
     setRipgrepState({ state: "unavailable" });
@@ -81,7 +81,7 @@ async function downloadRg(): Promise<void> {
   if (!r || r.ready || !r.asset || !r.version || ripgrepDownloading) return;
   ripgrepDownloading = true;
   console.log(`[zoo] downloading ripgrep ${r.version} from ${r.asset.url}`);
-  setRipgrepState({ state: "downloading", version: r.version, url: r.asset.url });
+  setRipgrepState({ state: "downloading", version: r.version, url: r.asset.url, size: r.asset.size });
   try {
     await downloadRipgrep(r.asset, r.version, ripgrepDir);
     // Same appRoot: Zoo Code finds the binary on its next search.
@@ -91,7 +91,7 @@ async function downloadRg(): Promise<void> {
   } catch (e) {
     const error = (e as Error).message;
     console.error(`[zoo] ${error}`);
-    setRipgrepState({ state: "failed", version: r.version, url: r.asset.url, error });
+    setRipgrepState({ state: "failed", version: r.version, url: r.asset.url, size: r.asset.size, error });
   } finally {
     ripgrepDownloading = false;
   }
@@ -130,7 +130,7 @@ async function download(p: PinnedVsix): Promise<void> {
   } catch (e) {
     const error = (e as Error).message;
     console.error(`[zoo] ${error}`);
-    setExtensionState({ state: "failed", version: p.version, url: p.url, error });
+    setExtensionState({ state: "failed", version: p.version, url: p.url, size: p.size, error });
   } finally {
     downloading = false;
   }
@@ -146,6 +146,12 @@ bridge.on("webview", (msg) => {
   const type = (msg as { type?: unknown } | null)?.type;
   if (type === "zoo-bridge/download") {
     void downloadMissing();
+    return;
+  }
+  // A page that just loaded asks where the extension and ripgrep stand.
+  if (type === "zoo-bridge/deps") {
+    bridge.postToWebview({ type: "zoo-bridge/extension", ...extensionState });
+    bridge.postToWebview({ type: "zoo-bridge/ripgrep", ...ripgrepState });
     return;
   }
   if (host) host.fromWebview(msg);
@@ -194,7 +200,7 @@ bridge
     if (found.pinned && autoDownload) await downloadMissing();
     else if (found.pinned) {
       console.log(`[zoo] Zoo Code ${found.pinned.version} is not on this machine: waiting for the user to allow the download (${found.pinned.url})`);
-      setExtensionState({ state: "missing", version: found.pinned.version, url: found.pinned.url });
+      setExtensionState({ state: "missing", version: found.pinned.version, url: found.pinned.url, size: found.pinned.size });
     } else {
       const error = "Zoo Code extension not found: install it in VS Code or set Settings › Plugins › Bridge for Zoo Code › Zoo Code extension.";
       console.error(`[zoo] ${error}`);

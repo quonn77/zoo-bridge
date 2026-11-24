@@ -1,5 +1,6 @@
 {
   "version": "3.98.2",
   "vsix": "https://github.com/Zoo-Code-Org/Zoo-Code/releases/download/v3.98.2/zoo-code-3.98.2.vsix",
-  "sha256": "400fe8f09dab6ac2af563c48f3c95d85d493ba9b10f2bb56b533e662481d70c5"
+  "sha256": "400fe8f09dab6ac2af563c48f3c95d85d493ba9b10f2bb56b533e662481d70c5",
+  "size": 37201022
 }

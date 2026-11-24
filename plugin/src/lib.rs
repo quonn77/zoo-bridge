@@ -96,6 +96,12 @@ pub fn bundled_zoo_version() -> &'static str {
 /// by scripts/copy-webview-ui.mjs): `(url, sha256)`, which the sidecar
 /// downloads, after the user agrees, when that version is not on the machine.
 /// None when it pins another version than the bundled UI's.
+pub fn pinned_vsix_size() -> Option<u64> {
+    let pin: Value = serde_json::from_str(include_str!("../zoo-code.json")).ok()?;
+    pin.get("size")?.as_u64()
+}
+
+/// See [`pinned_vsix_size`] for the size; `(url, sha256)` here.
 pub fn pinned_vsix() -> Option<(String, String)> {
     const PIN: &str = include_str!("../zoo-code.json");
     let pin: Value = serde_json::from_str(PIN).ok()?;
@@ -190,7 +196,14 @@ impl ZooCode {
             .env("ZOO_EXPECTED_VERSION", bundled_zoo_version());
         // Where the extension comes from: see sidecar/src/extension.ts.
         let cmd = match pinned_vsix() {
-            Some((url, sha256)) => cmd.env("ZOO_VSIX_URL", &url).env("ZOO_VSIX_SHA256", &sha256),
+            Some((url, sha256)) => {
+                let cmd = cmd.env("ZOO_VSIX_URL", &url).env("ZOO_VSIX_SHA256", &sha256);
+                // Shown to the user when asking to download it.
+                match pinned_vsix_size() {
+                    Some(size) => cmd.env("ZOO_VSIX_SIZE", &size.to_string()),
+                    None => cmd,
+                }
+            }
             None => cmd,
         };
         let cmd = match pinned_ripgrep() {

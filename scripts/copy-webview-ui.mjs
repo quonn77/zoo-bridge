@@ -116,7 +116,7 @@ const lockFile = join(root, "plugin", "zoo-code.json");
 if (fromVsix) {
   const sha256 = createHash("sha256").update(readFileSync(arg)).digest("hex");
   const url = `https://github.com/Zoo-Code-Org/Zoo-Code/releases/download/v${pkg.version}/zoo-code-${pkg.version}.vsix`;
-  writeFileSync(lockFile, JSON.stringify({ version: pkg.version, vsix: url, sha256 }, null, 2) + "\n");
+  writeFileSync(lockFile, JSON.stringify({ version: pkg.version, vsix: url, sha256, size: statSync(arg).size }, null, 2) + "\n");
   console.log(`pinned Zoo Code ${pkg.version} VSIX ${sha256} in ${relative(root, lockFile)}`);
   console.log(`check that ${url} is this file: the sidecar downloads it when Zoo Code is not on the machine`);
 } else {

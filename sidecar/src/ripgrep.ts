@@ -25,6 +25,8 @@ import { readCentralDirectory, readEntry } from "./zip.js";
 export interface RipgrepAsset {
   url: string;
   sha256: string;
+  /** Bytes, shown when asking the user. */
+  size?: number;
   /** The binary's path inside the archive. */
   file: string;
 }

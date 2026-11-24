@@ -26,9 +26,12 @@
   }
 
   function setState(next, detail, notice) {
+    const was = state;
     state = next;
     clearTimeout(retry);
     if (next === "connected") {
+      // Where the extension and ripgrep stand (zoo-bridge/extension, /ripgrep).
+      if (was !== "connected") send({ type: "zoo-bridge/deps" });
       for (const msg of queue.splice(0)) send(msg);
     } else {
       retry = setTimeout(hello, next === "starting" ? 1000 : 3000);
@@ -36,9 +39,15 @@
     window.dispatchEvent(new CustomEvent("zoo-bridge", { detail: { state: next, detail: detail || "", notice: notice } }));
   }
 
+  /** The last zoo-bridge/extension and zoo-bridge/ripgrep states. */
+  const deps = { extension: undefined, ripgrep: undefined };
+
   window.zooBridge = Object.freeze({
     get state() {
       return state;
+    },
+    get deps() {
+      return { extension: deps.extension, ripgrep: deps.ripgrep };
     },
     start() {
       send({ type: "zoo-bridge/start" });
@@ -53,6 +62,10 @@
     /** Ends the extension host (the plugin asks it to shut down). */
     stop() {
       send({ type: "zoo-bridge/stop" });
+    },
+    /** The user agreed: download what is missing (the extension, ripgrep). */
+    download() {
+      if (state === "connected") send({ type: "zoo-bridge/download" });
     },
   });
 
@@ -184,6 +197,14 @@
     }
     if (data && data.type === "zoo-bridge/status") {
       setState(data.state, data.detail, data.notice);
+      return;
+    }
+    // Where the Zoo Code extension and ripgrep stand (sidecar main.ts): shown
+    // by bridge-status.js, never given to Zoo Code.
+    if (data && (data.type === "zoo-bridge/extension" || data.type === "zoo-bridge/ripgrep")) {
+      // Kept for scripts that load after it arrived (window.zooBridge.deps).
+      deps[data.type === "zoo-bridge/extension" ? "extension" : "ripgrep"] = data;
+      window.dispatchEvent(new CustomEvent("zoo-bridge-deps", { detail: data }));
       return;
     }
     if (data && data.type === "zoo-bridge/dialog") {

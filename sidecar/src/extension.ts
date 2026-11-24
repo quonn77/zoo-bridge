@@ -28,6 +28,8 @@ export interface PinnedVsix {
   version: string;
   url: string;
   sha256: string;
+  /** Bytes, shown when asking the user. */
+  size?: number;
 }
 
 export type ExtensionSource = "setting" | "vscode" | "cache" | "download" | "vscode-other-version";
@@ -58,7 +60,8 @@ const VSCODE_NAME = /^zoocodeorganization\.zoo-code-(\d+)\.(\d+)\.(\d+)$/;
 export function readPinned(env: NodeJS.ProcessEnv = process.env): PinnedVsix | undefined {
   const { ZOO_EXPECTED_VERSION: version, ZOO_VSIX_URL: url, ZOO_VSIX_SHA256: sha256 } = env;
   if (!version || !url || !sha256 || !/^[0-9a-f]{64}$/.test(sha256) || !url.startsWith("https://")) return undefined;
-  return { version, url, sha256 };
+  const size = Number(env.ZOO_VSIX_SIZE) || undefined;
+  return size ? { version, url, sha256, size } : { version, url, sha256 };
 }
 
 function versionOf(dir: string): string | undefined {

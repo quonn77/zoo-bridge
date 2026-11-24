@@ -92,6 +92,21 @@ pub fn bundled_zoo_version() -> &'static str {
     VERSION_FILE.split_whitespace().nth(1).unwrap_or("")
 }
 
+/// The release VSIX of the bundled Zoo Code version (`zoo-code.json`, written
+/// by scripts/copy-webview-ui.mjs): `(url, sha256)`, which the sidecar
+/// downloads, after the user agrees, when that version is not on the machine.
+/// None when it pins another version than the bundled UI's.
+pub fn pinned_vsix() -> Option<(String, String)> {
+    const PIN: &str = include_str!("../zoo-code.json");
+    let pin: Value = serde_json::from_str(PIN).ok()?;
+    let field = |k: &str| pin.get(k).and_then(Value::as_str).map(str::to_owned);
+    if field("version")? != bundled_zoo_version() {
+        return None;
+    }
+    let (url, sha256) = (field("vsix")?, field("sha256")?);
+    (url.starts_with("https://") && sha256.len() == 64 && sha256.bytes().all(|b| b.is_ascii_hexdigit())).then_some((url, sha256))
+}
+
 /// The `editor` argument of Zoo Code's editor commands: path, first
 /// selection, and the document as the editor holds it (text and version),
 /// which may differ from the file on disk when it has unsaved changes.
@@ -163,6 +178,15 @@ impl ZooCode {
             // Extension state, settings and API keys (owner-only, removed on uninstall).
             .env("ZOO_DATA_DIR", &data_path("zoo-data")?)
             .env("ZOO_EXPECTED_VERSION", bundled_zoo_version());
+        // Where the extension comes from: see sidecar/src/extension.ts.
+        let cmd = match pinned_vsix() {
+            Some((url, sha256)) => cmd.env("ZOO_VSIX_URL", &url).env("ZOO_VSIX_SHA256", &sha256),
+            None => cmd,
+        };
+        let cmd = match host::setting_string("zooExtension").filter(|s| !s.is_empty()) {
+            Some(path) => cmd.env("ZOO_EXTENSION", &path),
+            None => cmd,
+        };
         host::open_terminal_session(TERMINAL_KEY, "Zoo Code Extension Host", &cmd)?;
         Ok(())
     }
@@ -476,6 +500,16 @@ register_plugin!(ZooCode, views);
 
 #[cfg(test)]
 mod tests {
+    /// A release must pin the VSIX of the very Zoo Code version whose UI it
+    /// bundles, or the sidecar has nothing to download (copy the UI from the
+    /// release .vsix: scripts/copy-webview-ui.mjs writes both).
+    #[test]
+    fn the_pinned_vsix_is_the_bundled_ui_version() {
+        let (url, sha256) = super::pinned_vsix().expect("zoo-code.json pins the bundled UI's version");
+        assert!(url.ends_with(&format!("/v{0}/zoo-code-{0}.vsix", super::bundled_zoo_version())), "{url}");
+        assert_eq!(sha256.len(), 64);
+    }
+
     /// Review of PR l0ng-ai/openidea-plugins#294: editor commands must carry
     /// the editor's text, which may be unsaved and differ from the disk.
     #[test]

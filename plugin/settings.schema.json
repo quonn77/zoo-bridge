@@ -1,5 +1,10 @@
 {
   "properties": {
+    "zooExtension": {
+      "type": "string",
+      "title": "Zoo Code extension: a Zoo Code extension folder or .vsix file to use instead of the one found automatically (VS Code with the same version, else the release the plugin pins, downloaded once you allow it). Leave empty for automatic.",
+      "default": ""
+    },
     "sidecarScript": {
       "type": "string",
       "title": "Development only: absolute path of a sidecar entry script (sidecar/dist/main.js). Leave empty to use the sidecar built into the plugin.",

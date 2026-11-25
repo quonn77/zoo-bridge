@@ -39,6 +39,8 @@ pub struct ZooCode {
     /// Their projects: the sidecar's notifications show in that project's
     /// window only (the WebSocket events that carry them have no window).
     projects: std::collections::BTreeMap<String, host::Project>,
+    /// The parts read so far of a sidecar message sent in parts.
+    partial: std::collections::BTreeMap<String, String>,
 }
 
 /// A short stable key for a project root (FNV-1a of the root).
@@ -181,7 +183,13 @@ fn editor_context(editor: &openidea_plugin::TextEditor) -> Result<Value, Error> 
 /// The bridge state for the pages of project `key` (or one page of it).
 fn status(key: &str, page: Option<&str>, state: &str, detail: &str) -> Result<(), Error> {
     let notice = host::storage::get(NOTICE_HIDDEN_KEY).ok().flatten().is_none();
-    let msg = json!({ "type": "zoo-bridge/status", "state": state, "detail": detail, "notice": notice, "project": key });
+    // The page asks for the start itself (zoo-bridge/autostart), after this delay.
+    let auto_start = host::setting_bool("autoStart").unwrap_or(true);
+    let delay = host::setting_number("autoStartDelay").filter(|d| d.is_finite() && *d >= 0.0).unwrap_or(0.0).min(60_000.0);
+    let msg = json!({
+        "type": "zoo-bridge/status", "state": state, "detail": detail, "notice": notice, "project": key,
+        "autoStart": auto_start, "autoStartDelay": delay as u64,
+    });
     post_to_view(Some(key), page, &msg)
 }
 
@@ -296,6 +304,9 @@ impl ZooCode {
                 }
                 self.conns.insert(key.clone(), ws);
                 self.projects.insert(key.clone(), project);
+                self.partial.remove(&key);
+                // Before anything else: the sidecar paces and splits what it sends.
+                self.send(&key, &Outbound::Flow)?;
                 Ok(Some(key))
             }
             Err(_) => Ok(None),
@@ -310,9 +321,14 @@ impl ZooCode {
 
     fn send(&mut self, key: &str, msg: &Outbound) -> Result<(), Error> {
         let Some(ws) = self.conns.get(key) else { return Err(Error::Invalid("Zoo Code extension host is not connected".into())) };
-        if let Err(e) = ws.send(msg.to_json().to_string().as_bytes()) {
-            self.conns.remove(key);
-            return Err(e);
+        for frame in msg.frames() {
+            if let Err(e) = ws.send(frame.as_bytes()) {
+                host::log(openidea_plugin::LogLevel::Warn, &format!("zoo-bridge: send to the extension host of {key} failed: {e}"));
+                self.conns.remove(key);
+                // The page shows it and reconnects (its hello retries).
+                let _ = status(key, None, "disconnected", &e.to_string());
+                return Err(e);
+            }
         }
         Ok(())
     }
@@ -340,7 +356,18 @@ impl ZooCode {
             let more = batch.messages.len() as u32 == DRAIN_LIMIT;
             for raw in &batch.messages {
                 let Ok(text) = std::str::from_utf8(raw) else { continue };
-                match Inbound::parse(text) {
+                let mut inbound = Inbound::parse(text);
+                // A message in parts: dispatched once its last part is in.
+                if let Some(Inbound::Part { last, data }) = inbound {
+                    let buf = self.partial.entry(key.clone()).or_default();
+                    buf.push_str(&data);
+                    if !last {
+                        continue;
+                    }
+                    let whole = self.partial.remove(&key).unwrap_or_default();
+                    inbound = Inbound::parse(&whole);
+                }
+                match inbound {
                     Some(Inbound::Webview(msg)) => {
                         let _ = post_to_view(Some(&key), None, &msg);
                     }
@@ -363,11 +390,17 @@ impl ZooCode {
                             None => host::notify(level, "Zoo Bridge", &message),
                         }
                     }
-                    Some(Inbound::Ping) | None => {}
+                    Some(Inbound::Ping) | Some(Inbound::Part { .. }) | None => {}
                 }
             }
+            // Read: the sidecar may send as many more.
+            if !batch.messages.is_empty() && !batch.closed {
+                let _ = self.send(&key, &Outbound::Ack { n: batch.messages.len() as u32 });
+            }
             if batch.closed {
+                host::log(openidea_plugin::LogLevel::Info, &format!("zoo-bridge: the extension host of {key} closed the connection"));
                 self.conns.remove(&key);
+                self.partial.remove(&key);
                 let _ = status(&key, None, "disconnected", "");
                 return;
             }

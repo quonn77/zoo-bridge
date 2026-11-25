@@ -136,8 +136,12 @@ async function download(p: PinnedVsix): Promise<void> {
   }
 }
 
+let everConnected = false;
 bridge.on("connected", () => {
-  console.log("[zoo] plugin connected");
+  console.log(`[zoo] plugin connected at ${new Date().toISOString()}`);
+  // Again after a lost connection: the page may have missed updates.
+  if (everConnected) host?.resync();
+  everConnected = true;
   if (!host) bridge.postToWebview({ type: "zoo-bridge/extension", ...extensionState });
   bridge.postToWebview({ type: "zoo-bridge/ripgrep", ...ripgrepState });
 });

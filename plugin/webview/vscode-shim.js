@@ -38,14 +38,15 @@
 
   // The tool window just opened: once the first answer says the extension
   // host is not running, ask the plugin to start it (autoStart setting).
-  // Once per page, so a stopped or closed host stays stopped; a little later
-  // than the hello, as opening its terminal can be slow while the window is
-  // still starting.
+  // Once per page, so a stopped or closed host stays stopped; after the
+  // autoStartDelay setting (the answer carries both settings).
   let autostartAsked = false;
-  function autostart(next) {
+  function autostart(status) {
     if (autostartAsked) return;
     autostartAsked = true;
-    if (next === "offline") setTimeout(() => send({ type: "zoo-bridge/autostart", page: pageId }), 1500);
+    if (status.state !== "offline" || status.autoStart === false) return;
+    const delay = Math.min(60000, Math.max(0, Number(status.autoStartDelay) || 0));
+    setTimeout(() => send({ type: "zoo-bridge/autostart", page: pageId }), delay);
   }
 
   /** The message inside a plugin envelope when it is for this page, else null. */
@@ -59,11 +60,11 @@
     return project !== null && data.project === project ? data.msg : null;
   }
 
-  function setState(next, detail, notice) {
+  function setState(next, detail, notice, status) {
     const was = state;
     state = next;
     clearTimeout(retry);
-    autostart(next);
+    autostart(status || { state: next });
     if (next === "connected") {
       // Where the extension and ripgrep stand (zoo-bridge/extension, /ripgrep).
       if (was !== "connected") send({ type: "zoo-bridge/deps" });
@@ -232,7 +233,7 @@
     }
     if (!data) return;
     if (data && data.type === "zoo-bridge/status") {
-      setState(data.state, data.detail, data.notice);
+      setState(data.state, data.detail, data.notice, data);
       return;
     }
     // Where the Zoo Code extension and ripgrep stand (sidecar main.ts): shown

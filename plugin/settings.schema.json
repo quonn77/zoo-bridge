@@ -12,7 +12,7 @@
     },
     "port": {
       "type": "number",
-      "title": "Loopback port of the sidecar WebSocket (0 = any free port)",
+      "title": "Loopback port of the sidecar WebSocket (0 = any free port; a fixed port fits only one open project)",
       "default": 0
     }
   }

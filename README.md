@@ -103,6 +103,11 @@ ripgrep are used; otherwise the plugin downloads what is missing, once you agree
 
 No setting is needed: the sidecar is built into the plugin and written to its data directory.
 
+**More windows.** Each open project has its own extension host (one Node.js process with Zoo Code,
+started from that project's window): Zoo Bridge in a window works on that window's project. Zoo
+Code's settings, API keys and task history are shared by all projects; the processes merge their
+changes instead of overwriting each other's.
+
 ### Where the extension comes from
 
 The sidecar looks for the Zoo Code extension in this order (`sidecar/src/extension.ts`):

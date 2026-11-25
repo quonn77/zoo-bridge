@@ -34,6 +34,10 @@ export class Configuration {
       const props = (block as { properties?: Record<string, { default?: unknown }> })?.properties ?? {};
       for (const [key, schema] of Object.entries(props)) this.defaults.set(key, schema.default);
     }
+    // Settings another project's sidecar changed.
+    settings.onDidChangeExternally((keys) =>
+      this.emitter.fire({ affectsConfiguration: (s: string) => keys.some((k) => k === s || k.startsWith(s + ".") || s.startsWith(k + ".")) }),
+    );
   }
 
   private value(key: string): unknown {

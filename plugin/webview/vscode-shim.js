@@ -21,8 +21,26 @@
   let state = "connecting";
   let retry;
 
+  // The plugin's view messages reach the page of every OpenIDEA window, in an
+  // envelope (zoo-bridge/to) naming the project they are for, or this page.
+  // The answer to this page's hello tells it its project; it keeps only that
+  // project's messages.
+  const pageId = Math.random().toString(36).slice(2) + Date.now().toString(36);
+  let project = null;
+
   function hello() {
-    send({ type: "zoo-bridge/hello" });
+    send({ type: "zoo-bridge/hello", page: pageId });
+  }
+
+  /** The message inside a plugin envelope when it is for this page, else null. */
+  function unwrap(data) {
+    if (!data || data.type !== "zoo-bridge/to") return data; // dev harness: no envelope
+    if (data.page) {
+      if (data.page !== pageId) return null;
+      if (data.project) project = data.project;
+      return data.msg;
+    }
+    return project !== null && data.project === project ? data.msg : null;
   }
 
   function setState(next, detail, notice) {
@@ -191,10 +209,11 @@
   oi.onMessage(function (text) {
     let data;
     try {
-      data = JSON.parse(text);
+      data = unwrap(JSON.parse(text));
     } catch (_) {
       return;
     }
+    if (!data) return;
     if (data && data.type === "zoo-bridge/status") {
       setState(data.state, data.detail, data.notice);
       return;

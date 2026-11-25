@@ -323,6 +323,6 @@ export class ExtensionHost {
     } catch (e) {
       console.error("[zoo] deactivate failed:", e);
     }
-    for (const f of this.files) f.flush();
+    for (const f of this.files) f.dispose();
   }
 }

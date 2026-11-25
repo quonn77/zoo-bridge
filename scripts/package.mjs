@@ -12,7 +12,8 @@
 //    and check of the .oiplugin as installing would check it
 //
 // Needs: Node.js, npm dependencies in sidecar/ (npm ci), Rust with wasm32-wasip2,
-// the openidea-plugin CLI, Zoo Code installed in VS Code (for step 1).
+// the openidea-plugin CLI, and for step 1, when plugin/webview/zoo is empty,
+// the pinned Zoo Code release .vsix (--vsix <file>, see plugin/zoo-code.json).
 
 import { execFileSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -33,8 +34,23 @@ const run = (cmd, argv, cwd = root, shell = false) => execFileSync(cmd, argv, { 
 const cli = (argv, cwd = plugin) => run("openidea-plugin", argv, cwd, process.platform === "win32");
 
 step("Zoo Code webview UI");
-if (!existsSync(join(plugin, "webview", "zoo", "VERSION"))) run(process.execPath, [join(root, "scripts", "copy-webview-ui.mjs")]);
-console.log(readFileSync(join(plugin, "webview", "zoo", "VERSION"), "utf8").trim());
+if (!existsSync(join(plugin, "webview", "zoo", "VERSION"))) {
+  // The pinned release VSIX, as the release must bundle the UI of that very file.
+  const pin = JSON.parse(readFileSync(join(plugin, "zoo-code.json"), "utf8"));
+  const vsix = opt("--vsix");
+  if (!vsix) {
+    console.error(`no Zoo Code UI in plugin/webview/zoo: pass --vsix <zoo-code-${pin.version}.vsix> (${pin.vsix})`);
+    process.exit(1);
+  }
+  run(process.execPath, [join(root, "scripts", "copy-webview-ui.mjs"), vsix]);
+}
+const uiVersion = readFileSync(join(plugin, "webview", "zoo", "VERSION"), "utf8").trim();
+const pinned = JSON.parse(readFileSync(join(plugin, "zoo-code.json"), "utf8"));
+console.log(`${uiVersion}; pinned VSIX ${pinned.version} ${pinned.sha256}`);
+if (uiVersion.split(" ")[1] !== pinned.version) {
+  console.error("plugin/zoo-code.json pins another Zoo Code version than the bundled UI: copy the UI from the pinned .vsix");
+  process.exit(1);
+}
 
 step("Sidecar");
 if (!existsSync(join(sidecar, "node_modules"))) run("npm", ["ci"], sidecar, true);

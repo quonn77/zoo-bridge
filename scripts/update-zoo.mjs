@@ -1,9 +1,10 @@
 #!/usr/bin/env node
-// Moves the plugin to the Zoo Code version installed in VS Code, in one step:
+// Moves the plugin to a Zoo Code version (the newest installed in VS Code, or
+// the extension dir / .vsix given), in one step:
 // copies its webview UI into the package (which also fixes the version the
 // sidecar must load), bumps the plugin's dev version and rebuilds.
 //
-//   node scripts/update-zoo.mjs [<zoo-code extension dir>]
+//   node scripts/update-zoo.mjs [<zoo-code-x.y.z.vsix | zoo-code extension dir>]
 //
 // Then: Settings › Plugins › Reload, Stop/Start the extension host.
 // Check the sidecar log for "[vscode] not implemented: …" lines: a new Zoo

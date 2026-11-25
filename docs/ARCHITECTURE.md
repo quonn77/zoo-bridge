@@ -109,12 +109,38 @@ Modifiche ai file (flusso `DiffViewProvider` di Zoo): `vscode.diff` registra la 
 documento resta in memoria (dirty) mentre Zoo scrive, l'IDE mostra il diff (sola lettura) quando lo
 stream si ferma; approvare/rifiutare resta nella chat di Zoo, `save()` scrive il file.
 
+### Un sidecar per progetto (lotto 6)
+
+Zoo Code presuppone un solo workspace per processo, mentre il plugin WASM ha **una sola istanza per
+tutte le finestre** di OpenIDEA. Quindi tutto è indicizzato per progetto: la chiave è un FNV-1a
+della radice (`project_key`), presa dal progetto della finestra da cui arriva comando, messaggio
+della pagina o evento.
+
+- Sessione terminale `zoo-sidecar-<key>`, file della porta `<plugin-dir>/sidecar-<key>.port`,
+  `ZOO_WORKSPACE` = radice del progetto; `ZooCode.conns` mappa chiave → WebSocket. Start da una
+  seconda finestra dello stesso progetto si ricollega al sidecar che c'è.
+- `websocket-ready` non ha finestra ma porta l'id della connessione: `drain` lavora sul sidecar di
+  quella connessione. Gli altri eventi (salvataggi, focus, problemi, file) vanno al sidecar del
+  progetto della loro finestra, se connesso.
+- `post_view_message` arriva alla pagina di **tutte** le finestre: ogni messaggio va in una busta
+  `{type:"zoo-bridge/to", project, page, msg}`. La pagina manda un `pageId` nell'hello; la risposta
+  (indirizzata a quel `pageId`) le dice il suo progetto, e da lì lo shim tiene solo i messaggi del
+  suo progetto. Così anche le richieste IDE (`zoo-bridge/ide`) le rigira una sola pagina.
+- Il sidecar gira nel terminale della finestra, quindi si chiude con lei; la connessione chiusa
+  porta la pagina a "disconnected".
+- Dati condivisi fra i sidecar (`globalState.json`, `secrets.json`, `settings.json` in `zoo-data`):
+  `JsonFile` scrive sotto un lock (`<file>.lock`, directory), rileggendo il file e applicando solo
+  le chiavi cambiate dal processo; le scritture degli altri processi sono rilette (polling) per le
+  chiavi non cambiate localmente, e `SecretStorage`/la configurazione lo notificano. La cronologia
+  dei task di Zoo è già un file per task con watcher (`TaskHistoryStore`); `workspaceState` è già per
+  progetto.
+
 ### Protocollo bridge (WS JSON)
 
 Frame **binari** (JSON UTF-8) in entrambe le direzioni: l'host OpenIDEA accoda per il plugin solo
 `Message::Binary`, i frame di testo vengono scartati in silenzio. La porta è scelta dal sidecar
-(`0` = libera) e scritta in `<plugin-dir>/sidecar.port`: su alcune macchine intere fasce di porte
-loopback non sono utilizzabili.
+(`0` = libera) e scritta in `<plugin-dir>/sidecar-<key>.port`: su alcune macchine intere fasce di
+porte loopback non sono utilizzabili.
 
 ```jsonc
 // sidecar → plugin

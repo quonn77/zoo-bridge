@@ -26,6 +26,8 @@ export interface HostOptions {
   extensionDir?: string;
   /** The Zoo Code version whose UI the plugin bundles (ZOO_EXPECTED_VERSION). */
   expectedVersion?: string;
+  /** `vscode.env.appRoot`, where Zoo Code finds ripgrep (see ripgrep.ts). */
+  appRoot?: string;
 }
 
 /**
@@ -43,35 +45,6 @@ export function findInstalledExtension(expected?: string): string | undefined {
   const exact = expected ? found.find((m) => `${m[1]}.${m[2]}.${m[3]}` === expected) : undefined;
   const pick = exact ?? found[found.length - 1];
   return pick ? join(dir, pick[0]) : undefined;
-}
-
-/** Ripgrep locations Zoo Code probes under `vscode.env.appRoot`. */
-const RIPGREP_DIRS = [
-  ["node_modules", "@vscode", "ripgrep", "bin"],
-  ["node_modules", "vscode-ripgrep", "bin"],
-  ["node_modules.asar.unpacked", "@vscode", "ripgrep", "bin"],
-  ["node_modules.asar.unpacked", "vscode-ripgrep", "bin"],
-  ["node_modules.asar.unpacked", "@vscode", "ripgrep-universal", "bin"],
-];
-
-/**
- * A VS Code `resources/app` holding ripgrep, used as `vscode.env.appRoot`
- * (Zoo Code runs ripgrep from there for file search and listing). Recent
- * VS Code builds keep it in a versioned folder (`Microsoft VS Code/<hash>/`).
- */
-export function findAppRoot(): string | undefined {
-  const installs = [
-    process.env.LOCALAPPDATA && join(process.env.LOCALAPPDATA, "Programs", "Microsoft VS Code"),
-    process.env.ProgramFiles && join(process.env.ProgramFiles, "Microsoft VS Code"),
-    "/usr/share/code",
-    "/Applications/Visual Studio Code.app/Contents",
-  ].filter((p): p is string => !!p && existsSync(p));
-  const candidates = [process.env.ZOO_APP_ROOT];
-  for (const dir of installs) {
-    candidates.push(join(dir, "resources", "app"), join(dir, "Resources", "app"));
-    for (const sub of readdirSync(dir)) candidates.push(join(dir, sub, "resources", "app"));
-  }
-  return candidates.find((c) => c && RIPGREP_DIRS.some((parts) => existsSync(join(c, ...parts))));
 }
 
 export class ExtensionHost {
@@ -126,9 +99,7 @@ export class ExtensionHost {
     const machineId = (state.get("machineId") as string | undefined) ?? randomUUID();
     state.set("machineId", machineId);
 
-    const appRoot = findAppRoot();
-    if (appRoot) console.log(`[zoo] ripgrep from ${appRoot}`);
-    else console.warn("[zoo] ripgrep not found (install VS Code or set ZOO_APP_ROOT): file search and listing will fail");
+    const appRoot = this.opts.appRoot;
     this.vscode = createVscode({
       bridge,
       workspaceRoot,
@@ -352,6 +323,6 @@ export class ExtensionHost {
     } catch (e) {
       console.error("[zoo] deactivate failed:", e);
     }
-    for (const f of this.files) f.flush();
+    for (const f of this.files) f.dispose();
   }
 }

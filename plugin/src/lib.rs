@@ -19,17 +19,37 @@ use protocol::{Inbound, Outbound};
 use serde_json::{Value, json};
 
 pub const VIEW: &str = "chat";
-const TERMINAL_KEY: &str = "zoo-sidecar";
-/// Where the sidecar writes the port it bound, inside the plugin's data directory.
-const PORT_FILE: &str = "sidecar.port";
 const TOKEN_KEY: &str = "sidecar.token";
 /// Messages taken from the WebSocket per drain: the host's maximum
 /// (a larger limit fails with "invalid drain limit").
 const DRAIN_LIMIT: u32 = 32;
 
+/// One sidecar per open project: Zoo Code assumes one workspace per process.
+///
+/// This plugin has one instance for all OpenIDEA windows, so everything is
+/// keyed by the project of the window a command, page message or event comes
+/// from ([`project_key`]): the sidecar's terminal session, its port file and
+/// its WebSocket. The tool window pages of all windows receive every view
+/// message, so each message names its project (and, for a hello's answer, its
+/// page): see [`post_to_view`].
 #[derive(Default)]
 pub struct ZooCode {
-    ws: Option<WebSocket>,
+    /// Connected sidecars by project key.
+    conns: std::collections::BTreeMap<String, WebSocket>,
+    /// Their projects: the sidecar's notifications show in that project's
+    /// window only (the WebSocket events that carry them have no window).
+    projects: std::collections::BTreeMap<String, host::Project>,
+}
+
+/// A short stable key for a project root (FNV-1a of the root).
+pub fn project_key(root: &str) -> String {
+    let root = root.trim_end_matches(['/', '\\']).replace('\\', "/");
+    fnv1a(&root)[..12].to_owned()
+}
+
+/// The terminal session that runs the project's sidecar.
+fn terminal_key(key: &str) -> String {
+    format!("zoo-sidecar-{key}")
 }
 
 /// The fixed port from the settings; 0 lets the sidecar pick a free one
@@ -45,16 +65,32 @@ fn data_path(name: &str) -> Result<String, Error> {
     Ok(format!("{}{sep}{name}", dir.trim_end_matches(['/', '\\'])))
 }
 
-fn port_file() -> Result<String, Error> {
-    data_path(PORT_FILE)
+/// Where the project's sidecar writes the port it bound.
+fn port_file(key: &str) -> Result<String, Error> {
+    data_path(&format!("sidecar-{key}.port"))
 }
 
-/// The port the running sidecar listens on: the configured one, or the one
-/// it wrote to its port file (none while it is not running).
-fn port() -> Option<u16> {
+/// The port the project's running sidecar listens on: the one it wrote to
+/// its port file (none while it is not running), or the configured one,
+/// which only fits a single project.
+fn port(key: &str) -> Option<u16> {
     match configured_port() {
-        0 => host::fs::read_file(&port_file().ok()?).ok()?.trim().parse().ok(),
+        0 => host::fs::read_file(&port_file(key).ok()?).ok()?.trim().parse().ok(),
         p => Some(p),
+    }
+}
+
+/// The project of the window `ctx` comes from; with no window project, the
+/// only open one.
+fn window_project(ctx: &Invocation) -> Result<host::Project, Error> {
+    if let Some(p) = ctx.project() {
+        return Ok(p);
+    }
+    let mut all = host::projects()?;
+    match all.len() {
+        1 => Ok(all.remove(0)),
+        0 => Err(Error::Invalid("open a project first".into())),
+        _ => Err(Error::Invalid("run this from the window of the project".into())),
     }
 }
 
@@ -76,8 +112,12 @@ fn token() -> Result<String, Error> {
     Ok(t)
 }
 
-fn post_to_view(msg: &Value) -> Result<(), Error> {
-    host::post_view_message(VIEW, &msg.to_string())
+/// Sends `msg` to the tool window pages. The host delivers it to the page of
+/// every window, so it goes in an envelope naming its project (and the page,
+/// for an answer to that page's hello); the shim drops what is not its own.
+fn post_to_view(project: Option<&str>, page: Option<&str>, msg: &Value) -> Result<(), Error> {
+    let envelope = json!({ "type": "zoo-bridge/to", "project": project, "page": page, "msg": msg });
+    host::post_view_message(VIEW, &envelope.to_string())
 }
 
 /// Storage key: the user hid the "unofficial port" line.
@@ -90,6 +130,37 @@ const NOTICE_HIDDEN_KEY: &str = "notice.hidden";
 pub fn bundled_zoo_version() -> &'static str {
     const VERSION_FILE: &str = include_str!("../webview/zoo/VERSION");
     VERSION_FILE.split_whitespace().nth(1).unwrap_or("")
+}
+
+/// The release VSIX of the bundled Zoo Code version (`zoo-code.json`, written
+/// by scripts/copy-webview-ui.mjs): `(url, sha256)`, which the sidecar
+/// downloads, after the user agrees, when that version is not on the machine.
+/// None when it pins another version than the bundled UI's.
+pub fn pinned_vsix_size() -> Option<u64> {
+    let pin: Value = serde_json::from_str(include_str!("../zoo-code.json")).ok()?;
+    pin.get("size")?.as_u64()
+}
+
+/// See [`pinned_vsix_size`] for the size; `(url, sha256)` here.
+pub fn pinned_vsix() -> Option<(String, String)> {
+    const PIN: &str = include_str!("../zoo-code.json");
+    let pin: Value = serde_json::from_str(PIN).ok()?;
+    let field = |k: &str| pin.get(k).and_then(Value::as_str).map(str::to_owned);
+    if field("version")? != bundled_zoo_version() {
+        return None;
+    }
+    let (url, sha256) = (field("vsix")?, field("sha256")?);
+    (url.starts_with("https://") && sha256.len() == 64 && sha256.bytes().all(|b| b.is_ascii_hexdigit())).then_some((url, sha256))
+}
+
+/// The ripgrep release the sidecar may download for Zoo Code's file search
+/// when neither VS Code nor PATH has one (`ripgrep.json`: one archive per
+/// platform with its SHA-256), as compact JSON for `ZOO_RIPGREP`.
+pub fn pinned_ripgrep() -> Option<String> {
+    const PIN: &str = include_str!("../ripgrep.json");
+    let pin: Value = serde_json::from_str(PIN).ok()?;
+    pin.get("assets")?.as_object()?;
+    serde_json::to_string(&pin).ok()
 }
 
 /// The `editor` argument of Zoo Code's editor commands: path, first
@@ -107,9 +178,11 @@ fn editor_context(editor: &openidea_plugin::TextEditor) -> Result<Value, Error> 
     }))
 }
 
-fn status(state: &str, detail: &str) -> Result<(), Error> {
+/// The bridge state for the pages of project `key` (or one page of it).
+fn status(key: &str, page: Option<&str>, state: &str, detail: &str) -> Result<(), Error> {
     let notice = host::storage::get(NOTICE_HIDDEN_KEY).ok().flatten().is_none();
-    post_to_view(&json!({ "type": "zoo-bridge/status", "state": state, "detail": detail, "notice": notice }))
+    let msg = json!({ "type": "zoo-bridge/status", "state": state, "detail": detail, "notice": notice, "project": key });
+    post_to_view(Some(key), page, &msg)
 }
 
 /// The bundled sidecar (see build.rs); empty in a development build without one.
@@ -150,33 +223,65 @@ fn sidecar_script() -> Result<String, Error> {
 }
 
 impl ZooCode {
-    /// Starts the sidecar in its terminal session (focuses it when it runs).
-    fn start_sidecar(&self, ctx: &Invocation) -> Result<(), Error> {
+    /// Starts the sidecar of the window's project in its terminal session
+    /// (focuses it when it runs); returns the project key.
+    fn start_sidecar(&mut self, ctx: &Invocation) -> Result<String, Error> {
+        let project = window_project(ctx)?;
+        let workspace = project.root()?;
+        let key = project_key(&workspace);
+        // Already running (started from another window of the same project?).
+        if self.connect(ctx)?.is_some() {
+            return Ok(key);
+        }
         let script = sidecar_script()?;
-        let workspace = ctx.project().map(|p| p.root()).transpose()?.unwrap_or_default();
+        let name = workspace.trim_end_matches(['/', '\\']).rsplit(['/', '\\']).next().unwrap_or_default().to_owned();
         let cmd = Command::new("node")
             .arg(&script)
             .env("ZOO_PORT", &configured_port().to_string())
-            .env("ZOO_PORT_FILE", &port_file()?)
+            .env("ZOO_PORT_FILE", &port_file(&key)?)
             .env("ZOO_TOKEN", &token()?)
             .env("ZOO_WORKSPACE", &workspace)
             // Extension state, settings and API keys (owner-only, removed on uninstall).
             .env("ZOO_DATA_DIR", &data_path("zoo-data")?)
             .env("ZOO_EXPECTED_VERSION", bundled_zoo_version());
-        host::open_terminal_session(TERMINAL_KEY, "Zoo Code Extension Host", &cmd)?;
-        Ok(())
+        // Where the extension comes from: see sidecar/src/extension.ts.
+        let cmd = match pinned_vsix() {
+            Some((url, sha256)) => {
+                let cmd = cmd.env("ZOO_VSIX_URL", &url).env("ZOO_VSIX_SHA256", &sha256);
+                // Shown to the user when asking to download it.
+                match pinned_vsix_size() {
+                    Some(size) => cmd.env("ZOO_VSIX_SIZE", &size.to_string()),
+                    None => cmd,
+                }
+            }
+            None => cmd,
+        };
+        let cmd = match pinned_ripgrep() {
+            Some(pin) => cmd.env("ZOO_RIPGREP", &pin),
+            None => cmd,
+        };
+        let cmd = match host::setting_string("zooExtension").filter(|s| !s.is_empty()) {
+            Some(path) => cmd.env("ZOO_EXTENSION", &path),
+            None => cmd,
+        };
+        // The window answers once the terminal runs, which in a window that is
+        // still starting (or right after OpenIDEA starts) takes more than the
+        // 5 s a plugin call may last: the host then restarts the plugin. An
+        // open task gives the call up to 60 s, and shows in the status bar.
+        let _task = host::begin_task(&format!("Starting Zoo Code extension host — {name}"), false);
+        host::open_terminal_session(&terminal_key(&key), &format!("Zoo Code Extension Host — {name}"), &cmd)?;
+        Ok(key)
     }
 
-    /// Connects to a running sidecar; `Ok(false)` while it is not listening yet.
-    fn connect(&mut self, ctx: &Invocation) -> Result<bool, Error> {
-        if self.ws.is_some() {
-            return Ok(true);
+    /// Connects to the running sidecar of the window's project; its key, or
+    /// `None` while it is not listening.
+    fn connect(&mut self, ctx: &Invocation) -> Result<Option<String>, Error> {
+        let project = window_project(ctx)?;
+        let key = project_key(&project.root()?);
+        if self.conns.contains_key(&key) {
+            return Ok(Some(key));
         }
-        let Some(port) = port() else { return Ok(false) };
-        let project = match ctx.project() {
-            Some(p) => p,
-            None => host::projects()?.into_iter().next().ok_or_else(|| Error::Invalid("open a project first".into()))?,
-        };
+        let Some(port) = port(&key) else { return Ok(None) };
         let req = WebSocketRequest {
             url: format!("ws://127.0.0.1:{port}/bridge?token={}", token()?),
             headers: Vec::new(),
@@ -189,31 +294,46 @@ impl ZooCode {
                     // Optional context for the extension: a missing one is not fatal.
                     let _ = host::subscribe(kind);
                 }
-                self.ws = Some(ws);
-                Ok(true)
+                self.conns.insert(key.clone(), ws);
+                self.projects.insert(key.clone(), project);
+                Ok(Some(key))
             }
-            Err(_) => Ok(false),
+            Err(_) => Ok(None),
         }
     }
 
-    fn send(&mut self, msg: &Outbound) -> Result<(), Error> {
-        let Some(ws) = &self.ws else { return Err(Error::Invalid("Zoo Code extension host is not connected".into())) };
+    /// The key of the window's project when its sidecar is connected, without connecting.
+    fn connected_key(&self, ctx: &Invocation) -> Option<String> {
+        let key = project_key(&window_project(ctx).ok()?.root().ok()?);
+        self.conns.contains_key(&key).then_some(key)
+    }
+
+    fn send(&mut self, key: &str, msg: &Outbound) -> Result<(), Error> {
+        let Some(ws) = self.conns.get(key) else { return Err(Error::Invalid("Zoo Code extension host is not connected".into())) };
         if let Err(e) = ws.send(msg.to_json().to_string().as_bytes()) {
-            self.ws = None;
+            self.conns.remove(key);
             return Err(e);
         }
         Ok(())
     }
 
-    /// Takes what the sidecar sent and dispatches it.
-    fn drain(&mut self, ctx: &Invocation) {
+    /// Window events go to the sidecar of that window's project, if connected.
+    fn forward(&mut self, ctx: &Invocation, kind: &str, data: Value) {
+        if let Some(key) = self.connected_key(ctx) {
+            let _ = self.send(&key, &Outbound::Event { kind: kind.into(), data });
+        }
+    }
+
+    /// Takes what sidecar connection `connection` sent and dispatches it.
+    fn drain(&mut self, connection: u64, ctx: &Invocation) {
+        let Some(key) = self.conns.iter().find(|(_, ws)| ws.id() == connection).map(|(k, _)| k.clone()) else { return };
         loop {
-            let Some(ws) = &self.ws else { return };
+            let Some(ws) = self.conns.get(&key) else { return };
             let batch = match ws.drain(DRAIN_LIMIT) {
                 Ok(b) => b,
                 Err(e) => {
-                    self.ws = None;
-                    let _ = status("disconnected", &format!("drain failed: {e}"));
+                    self.conns.remove(&key);
+                    let _ = status(&key, None, "disconnected", &format!("drain failed: {e}"));
                     return;
                 }
             };
@@ -222,11 +342,11 @@ impl ZooCode {
                 let Ok(text) = std::str::from_utf8(raw) else { continue };
                 match Inbound::parse(text) {
                     Some(Inbound::Webview(msg)) => {
-                        let _ = post_to_view(&msg);
+                        let _ = post_to_view(Some(&key), None, &msg);
                     }
                     Some(Inbound::Ide { id, op, args }) => {
                         let result = self.run_ide(&op, &args, ctx);
-                        let _ = self.send(&Outbound::IdeResult { id, result });
+                        let _ = self.send(&key, &Outbound::IdeResult { id, result });
                     }
                     Some(Inbound::Notify { level, message }) => {
                         let level = match level.as_str() {
@@ -234,14 +354,21 @@ impl ZooCode {
                             "warning" => NotificationLevel::Warning,
                             _ => NotificationLevel::Info,
                         };
-                        host::notify(level, "Zoo Bridge", &message);
+                        // host::notify would show it in the focused window,
+                        // whichever project that is.
+                        match self.projects.get(&key) {
+                            Some(project) => {
+                                let _ = project.notify(level, "Zoo Bridge", &message, &[]);
+                            }
+                            None => host::notify(level, "Zoo Bridge", &message),
+                        }
                     }
                     Some(Inbound::Ping) | None => {}
                 }
             }
             if batch.closed {
-                self.ws = None;
-                let _ = status("disconnected", "");
+                self.conns.remove(&key);
+                let _ = status(&key, None, "disconnected", "");
                 return;
             }
             if !more {
@@ -315,28 +442,64 @@ impl ZooCode {
         }
     }
 
-    /// Runs one of Zoo Code's commands in the sidecar, with the tool window in front.
+    /// Runs one of Zoo Code's commands in the window's sidecar, with the tool window in front.
     fn zoo_command(&mut self, id: &str, args: Value, ctx: &Invocation) -> Result<Option<String>, Error> {
         host::reveal_view(VIEW)?;
-        if !self.connect(ctx)? {
+        let Some(key) = self.connect(ctx)? else {
             return Err(Error::Invalid("Zoo Code extension host is not running: Zoo Bridge: Start Extension Host".into()));
-        }
-        self.send(&Outbound::Command { id: id.into(), args })?;
+        };
+        self.send(&key, &Outbound::Command { id: id.into(), args })?;
         Ok(None)
+    }
+
+    /// Ends the sidecar of the window's project; returns the project key.
+    fn stop_sidecar(&mut self, ctx: &Invocation) -> Result<String, Error> {
+        let key = project_key(&window_project(ctx)?.root()?);
+        if self.connect(ctx)?.is_some() {
+            let _ = self.send(&key, &Outbound::Shutdown);
+        }
+        self.conns.remove(&key);
+        Ok(key)
+    }
+
+    /// The window's project key, and its sidecar's when connected.
+    fn keys(&mut self, ctx: &Invocation) -> Result<(String, Option<String>), Error> {
+        let key = project_key(&window_project(ctx)?.root()?);
+        let connected = self.connect(ctx)?;
+        Ok((key, connected))
     }
 
     fn from_webview(&mut self, text: &str, ctx: &Invocation) -> Result<(), Error> {
         let Ok(msg) = serde_json::from_str::<Value>(text) else { return Ok(()) };
+        // The page's id: the answer to its hello goes to it alone.
+        let page = msg.get("page").and_then(Value::as_str).map(str::to_owned);
         // Bridge control messages from the shim; everything else is Zoo Code's.
         match msg.get("type").and_then(Value::as_str) {
             Some("zoo-bridge/hello") => {
                 // Zoo Code's page sends its own `webviewDidLaunch` once the
-                // shim has flushed its queue on `connected`.
-                if self.connect(ctx)? {
-                    status("connected", "")
-                } else {
-                    status("offline", "Zoo Code extension host not running")
+                // shim has flushed its queue on `connected`. The answer tells
+                // the page its project, whose messages it keeps.
+                let (key, connected) = self.keys(ctx)?;
+                match connected {
+                    Some(_) => status(&key, page.as_deref(), "connected", ""),
+                    None => status(&key, page.as_deref(), "offline", "Zoo Code extension host not running"),
                 }
+            }
+            // The tool window opened with the sidecar offline (sent once per
+            // page, a moment after its hello): start it unless autoStart is
+            // off. Not part of the hello: opening the terminal can take
+            // seconds in a window that is still starting, and a call over
+            // the host's limit restarts the plugin.
+            Some("zoo-bridge/autostart") => {
+                let (key, connected) = self.keys(ctx)?;
+                if connected.is_some() || !host::setting_bool("autoStart").unwrap_or(true) {
+                    return Ok(());
+                }
+                let key = self.start_sidecar(ctx).inspect_err(|e| {
+                    let _ = status(&key, page.as_deref(), "offline", &e.to_string());
+                })?;
+                let state = if self.conns.contains_key(&key) { "connected" } else { "starting" };
+                status(&key, None, state, "")
             }
             Some("zoo-bridge/dismiss-notice") => host::storage::set(NOTICE_HIDDEN_KEY, "1"),
             // An IDE request of the sidecar relayed by the page (see run_ide).
@@ -345,10 +508,8 @@ impl ZooCode {
                 let op = msg.get("op").and_then(Value::as_str).unwrap_or_default().to_owned();
                 let args = msg.get("args").cloned().unwrap_or(Value::Null);
                 let result = self.run_ide(&op, &args, ctx);
-                if !self.connect(ctx)? {
-                    return Ok(());
-                }
-                self.send(&Outbound::IdeResult { id, result })
+                let Some(key) = self.connect(ctx)? else { return Ok(()) };
+                self.send(&key, &Outbound::IdeResult { id, result })
             }
             // Toolbar: one of Zoo Code's view title commands.
             Some("zoo-bridge/command") => {
@@ -356,37 +517,33 @@ impl ZooCode {
                 if !id.starts_with("zoo-code.") {
                     return Ok(());
                 }
-                if !self.connect(ctx)? {
-                    return status("offline", "Zoo Code extension host not running");
+                match self.keys(ctx)? {
+                    (key, None) => status(&key, None, "offline", "Zoo Code extension host not running"),
+                    (_, Some(key)) => self.send(&key, &Outbound::Command { id: id.into(), args: Value::Null }),
                 }
-                self.send(&Outbound::Command { id: id.into(), args: Value::Null })
             }
             Some("zoo-bridge/stop") => {
-                if self.connect(ctx)? {
-                    let _ = self.send(&Outbound::Shutdown);
-                }
-                self.ws = None;
-                status("offline", "Zoo Code extension host stopped")
+                let key = self.stop_sidecar(ctx)?;
+                status(&key, None, "offline", "Zoo Code extension host stopped")
             }
             Some("zoo-bridge/start") => {
-                self.start_sidecar(ctx)?;
-                status("starting", "")
+                let key = self.start_sidecar(ctx)?;
+                let state = if self.conns.contains_key(&key) { "connected" } else { "starting" };
+                status(&key, None, state, "")
             }
-            _ => {
-                if !self.connect(ctx)? {
-                    return status("offline", "Zoo Code extension host not running");
-                }
-                self.send(&Outbound::Webview(msg))
-            }
+            _ => match self.keys(ctx)? {
+                (key, None) => status(&key, None, "offline", "Zoo Code extension host not running"),
+                (_, Some(key)) => self.send(&key, &Outbound::Webview(msg)),
+            },
         }
     }
 }
 
 impl Plugin for ZooCode {
     fn deactivate(&mut self) {
-        // Dropping the WebSocket closes it; the sidecar keeps running and
-        // waits for the next instance.
-        self.ws = None;
+        // Dropping the WebSockets closes them; the sidecars keep running and
+        // wait for the next instance.
+        self.conns.clear();
     }
 
     fn run_command(&mut self, id: &str, ctx: &Invocation, _arg: Option<&str>) -> Result<Option<String>, Error> {
@@ -396,10 +553,7 @@ impl Plugin for ZooCode {
                 Ok(Some("Zoo Code extension host starting".into()))
             }
             "stop-sidecar" => {
-                if self.connect(ctx)? {
-                    self.send(&Outbound::Shutdown)?;
-                }
-                self.ws = None;
+                self.stop_sidecar(ctx)?;
                 Ok(None)
             }
             "new-task" | "history" | "settings" => {
@@ -430,20 +584,15 @@ impl Plugin for ZooCode {
     fn handle_events(&mut self, events: &[Event], ctx: &Invocation) {
         for event in events {
             match event {
-                Event::WebSocketReady(_) => self.drain(ctx),
-                Event::FileSaved(path) => {
-                    let _ = self.send(&Outbound::Event { kind: "file-saved".into(), data: json!(path) });
-                }
-                Event::EditorFocused(path) => {
-                    let _ = self.send(&Outbound::Event { kind: "editor-focused".into(), data: json!(path) });
-                }
-                Event::Other { kind, .. } if kind == "problems-changed" => {
-                    // The sidecar asks for the problems through the page (needs a window).
-                    let _ = self.send(&Outbound::Event { kind: kind.clone(), data: Value::Null });
-                }
+                // No window: the event names its connection.
+                Event::WebSocketReady(ready) => self.drain(ready.connection, ctx),
+                Event::FileSaved(path) => self.forward(ctx, "file-saved", json!(path)),
+                Event::EditorFocused(path) => self.forward(ctx, "editor-focused", json!(path)),
+                // The sidecar asks for the problems through the page (needs a window).
+                Event::Other { kind, .. } if kind == "problems-changed" => self.forward(ctx, kind, Value::Null),
                 Event::FilesChanged(fc) => {
                     let data = json!({ "created": fc.created, "modified": fc.modified, "removed": fc.removed });
-                    let _ = self.send(&Outbound::Event { kind: "files-changed".into(), data });
+                    self.forward(ctx, "files-changed", data);
                 }
                 _ => {}
             }
@@ -476,6 +625,107 @@ register_plugin!(ZooCode, views);
 
 #[cfg(test)]
 mod tests {
+    use openidea_plugin::Plugin;
+    use openidea_plugin::views::{ViewEvent, Views};
+
+    #[test]
+    fn project_keys_are_stable_per_root_and_distinct() {
+        let a = super::project_key("C:\\work\\alpha");
+        assert_eq!(a.len(), 12);
+        assert_eq!(a, super::project_key("C:/work/alpha/"), "separators and a trailing slash do not matter");
+        assert_ne!(a, super::project_key("C:\\work\\beta"));
+    }
+
+    /// Lot 6: each window's page learns its own project from the answer to its
+    /// hello; the host delivers view messages to every window, so they name it.
+    #[test]
+    fn each_window_page_gets_its_own_project() {
+        use openidea_plugin::mock::MockHost;
+        let host = MockHost::install().with_capabilities(&["storage", "project.read", "process:node"]);
+        let mut plugin = super::ZooCode::default();
+        let mut hello = |root: &str, page: &str| {
+            host.set_project_root(Some(root));
+            let ctx = host.invocation();
+            plugin.handle(super::VIEW, ViewEvent::Message(format!(r#"{{"type":"zoo-bridge/hello","page":"{page}"}}"#)), &ctx).unwrap();
+            let (_, last) = host.view_messages().last().cloned().unwrap();
+            serde_json::from_str::<serde_json::Value>(&last).unwrap()
+        };
+        let a = hello("/work/alpha", "page-a");
+        let b = hello("/work/beta", "page-b");
+        assert_eq!(a["type"], "zoo-bridge/to");
+        assert_eq!(a["page"], "page-a");
+        assert_eq!(a["project"], super::project_key("/work/alpha"));
+        assert_eq!(a["msg"]["type"], "zoo-bridge/status");
+        assert_eq!(a["msg"]["state"], "offline");
+        assert_eq!(b["page"], "page-b");
+        assert_eq!(b["project"], super::project_key("/work/beta"));
+        assert_ne!(a["project"], b["project"]);
+    }
+
+    /// Lot 6: Start from two windows runs two sidecars, one per project.
+    #[test]
+    fn start_runs_one_sidecar_per_project() {
+        use openidea_plugin::mock::MockHost;
+        let host = MockHost::install().with_capabilities(&["storage", "project.read", "process:node"]);
+        host.set_setting("sidecarScript", "\"/dev/sidecar/main.js\"");
+        let mut plugin = super::ZooCode::default();
+        for root in ["/work/alpha", "/work/beta"] {
+            host.set_project_root(Some(root));
+            plugin.run_command("start-sidecar", &host.invocation(), None).unwrap();
+        }
+        for root in ["/work/alpha", "/work/beta"] {
+            let key = super::terminal_key(&super::project_key(root));
+            assert!(host.finish_terminal(&key).is_some(), "no sidecar session {key} for {root}");
+        }
+    }
+
+    /// Opening the tool window starts the sidecar (the page's autostart,
+    /// apart from its hello), unless autoStart is off; hellos never do.
+    #[test]
+    fn opening_the_tool_window_starts_the_sidecar() {
+        use openidea_plugin::mock::MockHost;
+        let host = MockHost::install().with_capabilities(&["storage", "project.read", "process:node"]);
+        host.set_setting("sidecarScript", "\"/dev/sidecar/main.js\"");
+        let mut plugin = super::ZooCode::default();
+        let mut send = |root: &str, kind: &str| {
+            host.set_project_root(Some(root));
+            let before = host.view_messages().len();
+            let msg = format!(r#"{{"type":"zoo-bridge/{kind}","page":"p"}}"#);
+            plugin.handle(super::VIEW, ViewEvent::Message(msg), &host.invocation()).unwrap();
+            let state = host.view_messages().get(before).map(|(_, m)| {
+                let v: serde_json::Value = serde_json::from_str(m).unwrap();
+                v["msg"]["state"].as_str().unwrap_or_default().to_owned()
+            });
+            let started = host.finish_terminal(&super::terminal_key(&super::project_key(root))).is_some();
+            (state.unwrap_or_default(), started)
+        };
+        assert_eq!(send("/work/alpha", "hello"), ("offline".into(), false), "a hello never starts it");
+        assert_eq!(send("/work/alpha", "autostart"), ("starting".into(), true));
+        host.set_setting("autoStart", "false");
+        assert_eq!(send("/work/beta", "autostart"), (String::new(), false), "autoStart off");
+    }
+
+    /// A release must pin the VSIX of the very Zoo Code version whose UI it
+    /// bundles, or the sidecar has nothing to download (copy the UI from the
+    /// release .vsix: scripts/copy-webview-ui.mjs writes both).
+    #[test]
+    fn the_ripgrep_pin_covers_the_desktop_platforms() {
+        let pin: serde_json::Value = serde_json::from_str(&super::pinned_ripgrep().expect("ripgrep.json")).unwrap();
+        for platform in ["win32-x64", "win32-arm64", "linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64"] {
+            let a = &pin["assets"][platform];
+            assert!(a["url"].as_str().is_some_and(|u| u.starts_with("https://github.com/BurntSushi/ripgrep/releases/download/")), "{platform}");
+            assert_eq!(a["sha256"].as_str().map(str::len), Some(64), "{platform}");
+            assert!(a["file"].as_str().is_some_and(|f| f.ends_with("/rg") || f.ends_with("/rg.exe")), "{platform}");
+        }
+    }
+
+    #[test]
+    fn the_pinned_vsix_is_the_bundled_ui_version() {
+        let (url, sha256) = super::pinned_vsix().expect("zoo-code.json pins the bundled UI's version");
+        assert!(url.ends_with(&format!("/v{0}/zoo-code-{0}.vsix", super::bundled_zoo_version())), "{url}");
+        assert_eq!(sha256.len(), 64);
+    }
+
     /// Review of PR l0ng-ai/openidea-plugins#294: editor commands must carry
     /// the editor's text, which may be unsaved and differ from the disk.
     #[test]

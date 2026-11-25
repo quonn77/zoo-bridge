@@ -13,6 +13,13 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocket } from "ws";
 
+// The Zoo Code version whose UI the plugin bundles (as plugin/src/lib.rs passes it).
+const bundledZooVersion = readFileSync(new URL("../../plugin/webview/zoo/VERSION", import.meta.url), "utf8").trim().split(" ")[1];
+// The pinned release VSIX (as plugin/src/lib.rs passes it): without Zoo Code
+// ${bundledZooVersion} in VS Code or ZOO_EXTENSION_DIR, the sidecar downloads it.
+const pin = JSON.parse(readFileSync(new URL("../../plugin/zoo-code.json", import.meta.url), "utf8"));
+const pinEnv = pin.version === bundledZooVersion ? { ZOO_VSIX_URL: pin.vsix, ZOO_VSIX_SHA256: pin.sha256, ZOO_AUTO_DOWNLOAD: "1" } : {};
+
 const here = dirname(fileURLToPath(import.meta.url));
 const MARK = "zoo-bridge-e2e";
 const dataDir = mkdtempSync(join(tmpdir(), "zoo-e2e-"));
@@ -111,7 +118,7 @@ const portFile = join(dataDir, "sidecar.port");
 const entry = process.env.ZOO_SIDECAR_ENTRY || join(here, "..", "dist", "main.js");
 console.log(`sidecar: ${entry}`);
 const child = spawn(process.execPath, [entry], {
-  env: { ...process.env, ZOO_TOKEN: "e2e", ZOO_PORT: "0", ZOO_PORT_FILE: portFile, ZOO_WORKSPACE: workspace, ZOO_DATA_DIR: dataDir, ZOO_EXPECTED_VERSION: "3.98.0" },
+  env: { ...process.env, ZOO_TOKEN: "e2e", ZOO_PORT: "0", ZOO_PORT_FILE: portFile, ZOO_WORKSPACE: workspace, ZOO_DATA_DIR: dataDir, ZOO_EXPECTED_VERSION: bundledZooVersion, ...pinEnv },
   stdio: ["ignore", "pipe", "pipe"],
 });
 const log = [];
@@ -123,14 +130,23 @@ if (!existsSync(portFile)) fail("sidecar did not start");
 const ws = new WebSocket(`ws://127.0.0.1:${readFileSync(portFile, "utf8").trim()}/bridge?token=e2e`);
 const send = (o) => ws.send(Buffer.from(JSON.stringify(o)), { binary: true });
 let output = "";
+let extension = {};
 ws.on("message", (data) => {
   const m = JSON.parse(String(data));
+  if (m.t === "webview" && m.msg?.type === "zoo-bridge/extension") extension = m.msg;
   if (m.t === "webview" && m.msg?.type === "zoo-bridge/ide") send({ t: "ide-result", id: m.msg.id, ok: true, value: m.msg.op === "problems" ? {} : null });
   const texts = JSON.stringify(m);
   if (texts.includes(MARK) && texts.includes("command_output")) output = texts;
 });
 await new Promise((r) => ws.once("open", r));
 send({ t: "webview", msg: { type: "webviewDidLaunch" } });
+// The extension: found on the machine, or downloaded (ZOO_AUTO_DOWNLOAD).
+for (const until = Date.now() + 300000; extension.state !== "ready" && extension.state !== "failed" && Date.now() < until; ) await new Promise((r) => setTimeout(r, 200));
+if (extension.state !== "ready") {
+  console.error(log.join("").split("\n").filter((l) => !/Vercel AI Gateway|persistence-trace/.test(l)).slice(-20).join("\n"));
+  fail(`extension not ready: ${JSON.stringify(extension)}`);
+}
+console.log(`extension: Zoo Code ${extension.version} (${extension.source})`);
 await new Promise((r) => setTimeout(r, 4000)); // activation and state
 send({ t: "webview", msg: { type: "newTask", text: "Run the end-to-end check command." } });
 

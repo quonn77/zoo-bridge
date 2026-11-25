@@ -21,14 +21,52 @@
   let state = "connecting";
   let retry;
 
+  // The plugin's view messages reach the page of every OpenIDEA window, in an
+  // envelope (zoo-bridge/to) naming the project they are for, or this page.
+  // The answer to this page's hello tells it its project; it keeps only that
+  // project's messages.
+  const pageId = Math.random().toString(36).slice(2) + Date.now().toString(36);
+  let project = null;
+
   function hello() {
-    send({ type: "zoo-bridge/hello" });
+    send({ type: "zoo-bridge/hello", page: pageId });
+    // No answer (the plugin is restarting after a call over the host's time
+    // limit): ask again rather than stay "connecting".
+    clearTimeout(retry);
+    retry = setTimeout(hello, 8000);
+  }
+
+  // The tool window just opened: once the first answer says the extension
+  // host is not running, ask the plugin to start it (autoStart setting).
+  // Once per page, so a stopped or closed host stays stopped; a little later
+  // than the hello, as opening its terminal can be slow while the window is
+  // still starting.
+  let autostartAsked = false;
+  function autostart(next) {
+    if (autostartAsked) return;
+    autostartAsked = true;
+    if (next === "offline") setTimeout(() => send({ type: "zoo-bridge/autostart", page: pageId }), 1500);
+  }
+
+  /** The message inside a plugin envelope when it is for this page, else null. */
+  function unwrap(data) {
+    if (!data || data.type !== "zoo-bridge/to") return data; // dev harness: no envelope
+    if (data.page) {
+      if (data.page !== pageId) return null;
+      if (data.project) project = data.project;
+      return data.msg;
+    }
+    return project !== null && data.project === project ? data.msg : null;
   }
 
   function setState(next, detail, notice) {
+    const was = state;
     state = next;
     clearTimeout(retry);
+    autostart(next);
     if (next === "connected") {
+      // Where the extension and ripgrep stand (zoo-bridge/extension, /ripgrep).
+      if (was !== "connected") send({ type: "zoo-bridge/deps" });
       for (const msg of queue.splice(0)) send(msg);
     } else {
       retry = setTimeout(hello, next === "starting" ? 1000 : 3000);
@@ -36,9 +74,15 @@
     window.dispatchEvent(new CustomEvent("zoo-bridge", { detail: { state: next, detail: detail || "", notice: notice } }));
   }
 
+  /** The last zoo-bridge/extension and zoo-bridge/ripgrep states. */
+  const deps = { extension: undefined, ripgrep: undefined };
+
   window.zooBridge = Object.freeze({
     get state() {
       return state;
+    },
+    get deps() {
+      return { extension: deps.extension, ripgrep: deps.ripgrep };
     },
     start() {
       send({ type: "zoo-bridge/start" });
@@ -53,6 +97,10 @@
     /** Ends the extension host (the plugin asks it to shut down). */
     stop() {
       send({ type: "zoo-bridge/stop" });
+    },
+    /** The user agreed: download what is missing (the extension, ripgrep). */
+    download() {
+      if (state === "connected") send({ type: "zoo-bridge/download" });
     },
   });
 
@@ -178,12 +226,21 @@
   oi.onMessage(function (text) {
     let data;
     try {
-      data = JSON.parse(text);
+      data = unwrap(JSON.parse(text));
     } catch (_) {
       return;
     }
+    if (!data) return;
     if (data && data.type === "zoo-bridge/status") {
       setState(data.state, data.detail, data.notice);
+      return;
+    }
+    // Where the Zoo Code extension and ripgrep stand (sidecar main.ts): shown
+    // by bridge-status.js, never given to Zoo Code.
+    if (data && (data.type === "zoo-bridge/extension" || data.type === "zoo-bridge/ripgrep")) {
+      // Kept for scripts that load after it arrived (window.zooBridge.deps).
+      deps[data.type === "zoo-bridge/extension" ? "extension" : "ripgrep"] = data;
+      window.dispatchEvent(new CustomEvent("zoo-bridge-deps", { detail: data }));
       return;
     }
     if (data && data.type === "zoo-bridge/dialog") {

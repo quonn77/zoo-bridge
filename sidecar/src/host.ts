@@ -223,9 +223,20 @@ export class ExtensionHost {
       onDidChangeVisibility: visibility.event,
     };
     await reg.provider.resolveWebviewView(view, { state: undefined }, new T.CancellationTokenSource().token);
+    this.provider = reg.provider as { postStateToWebview?: () => Promise<void> };
     this.resolved = true;
     for (const msg of this.early.splice(0)) this.webviewMessages.fire(msg);
     console.log("[zoo] sidebar webview resolved");
+  }
+
+  private provider: { postStateToWebview?: () => Promise<void> } | undefined;
+
+  /**
+   * Sends Zoo Code's whole state to the page again: after a lost connection
+   * the page may have missed updates (an approval asked meanwhile, say).
+   */
+  resync(): void {
+    this.provider?.postStateToWebview?.().catch((e: Error) => console.warn(`[zoo] resync: ${e.message}`));
   }
 
   /** A message from the page (Zoo Code's webview-ui, or the shim's dialog answers). */

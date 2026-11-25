@@ -3,6 +3,15 @@
 // One plugin instance at a time: a new connection replaces the old one (an
 // instance reclaimed while idle reconnects as a new one). Messages sent while
 // no plugin is connected are queued and flushed on the next connection.
+//
+// OpenIDEA's plugin WebSocket closes the connection when a message is over
+// 1 MiB, or when more than 256 messages / 8 MiB wait for the plugin to read
+// them. Zoo Code sends its whole state (which grows with the task) and bursts
+// of streaming updates, so a plugin that announces flow control
+// (`{t:"flow"}`, first thing after connecting) gets:
+// - messages over `part` bytes split into `{t:"part"}` frames, in order;
+// - at most `frames` / `bytes` frames it has not acknowledged (`{t:"ack"}`
+//   after each read). The rest waits here.
 
 import { EventEmitter } from "node:events";
 import type { IncomingMessage } from "node:http";
@@ -14,13 +23,45 @@ export type FromPlugin =
   | { t: "ide-result"; id: number; ok: boolean; value?: unknown; error?: string }
   | { t: "event"; kind: string; data: unknown }
   | { t: "command"; id: string; args: unknown }
-  | { t: "shutdown" };
+  | { t: "shutdown" }
+  | { t: "flow"; frames: number; bytes: number; part: number }
+  | { t: "ack"; n: number }
+  | { t: "part"; last: boolean; data: string };
 
 export type ToPlugin =
   | { t: "webview"; msg: unknown }
   | { t: "ide"; id: number; op: string; args: unknown }
   | { t: "notify"; level: "info" | "warning" | "error"; message: string }
   | { t: "ping" };
+
+/** Flow control a plugin announced (see the top of this file). */
+interface Flow {
+  frames: number;
+  bytes: number;
+  part: number;
+}
+
+/** A message waiting to be sent, and how many of its parts already went out. */
+interface Outgoing {
+  text: string;
+  parts: string[] | undefined;
+  sent: number;
+}
+
+/** `text` as part frames of at most `max` UTF-8 bytes each. */
+export function splitParts(text: string, max: number): string[] {
+  // Room for the frame's own JSON; a character escapes to at most 6 bytes.
+  const budget = Math.max(1024, Math.floor((max - 64) / 6));
+  const out: string[] = [];
+  for (let i = 0; i < text.length; ) {
+    let end = Math.min(text.length, i + budget);
+    // Do not split a surrogate pair.
+    if (end < text.length && /[\uD800-\uDBFF]/.test(text[end - 1]!)) end--;
+    out.push(JSON.stringify({ t: "part", last: end >= text.length, data: text.slice(i, end) }));
+    i = end;
+  }
+  return out;
+}
 
 export interface BridgeOptions {
   port: number;
@@ -59,7 +100,16 @@ function sameToken(a: string, b: string): boolean {
 export class Bridge extends EventEmitter<BridgeEvents> {
   private readonly server: WebSocketServer;
   private socket: WebSocket | undefined;
-  private readonly queue: string[] = [];
+  /** Messages not sent yet, oldest first (the first may be partly sent). */
+  private readonly queue: Outgoing[] = [];
+  /** The connected plugin's flow control: undefined until it says, null for none. */
+  private flow: Flow | null | undefined;
+  private flowTimer: NodeJS.Timeout | undefined;
+  /** Sizes of the frames sent and not acknowledged yet. */
+  private inflight: number[] = [];
+  private inflightBytes = 0;
+  /** Parts of a message from the plugin. */
+  private incoming = "";
   private readonly pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }>();
   private nextId = 1;
   private readonly ping: NodeJS.Timeout;
@@ -76,7 +126,10 @@ export class Bridge extends EventEmitter<BridgeEvents> {
       },
     });
     this.server.on("connection", (ws) => this.attach(ws));
-    this.ping = setInterval(() => this.sendNow({ t: "ping" }), opts.pingMs ?? 60_000);
+    // Only when idle: anything else being sent keeps the instance in use too.
+    this.ping = setInterval(() => {
+      if (this.connected && this.queue.length === 0) this.send({ t: "ping" });
+    }, opts.pingMs ?? 60_000);
     this.ping.unref();
   }
 
@@ -139,30 +192,64 @@ export class Bridge extends EventEmitter<BridgeEvents> {
   }
 
   private send(msg: ToPlugin): void {
-    if (!this.sendNow(msg)) {
-      this.queue.push(JSON.stringify(msg));
-      const max = this.opts.maxQueue ?? 1000;
-      if (this.queue.length > max) this.queue.splice(0, this.queue.length - max);
-    }
+    this.queue.push({ text: JSON.stringify(msg), parts: undefined, sent: 0 });
+    const max = this.opts.maxQueue ?? 1000;
+    // Drop the oldest, but never a message whose first parts already went out.
+    while (this.queue.length > max) this.queue.splice(this.queue[0]!.sent > 0 ? 1 : 0, 1);
+    this.pump();
   }
 
-  private sendNow(msg: ToPlugin): boolean {
-    if (!this.connected) return false;
-    sendFrame(this.socket!, JSON.stringify(msg));
-    return true;
+  /** Sends what the plugin's flow control allows. */
+  private pump(): void {
+    const ws = this.socket;
+    if (!ws || ws.readyState !== WebSocket.OPEN || this.flow === undefined) return;
+    const flow = this.flow;
+    while (this.queue.length > 0) {
+      const head = this.queue[0]!;
+      if (!flow) {
+        sendFrame(ws, head.text);
+        this.queue.shift();
+        continue;
+      }
+      head.parts ??= Buffer.byteLength(head.text) > flow.part ? splitParts(head.text, flow.part) : [head.text];
+      const frame = head.parts[head.sent]!;
+      const size = Buffer.byteLength(frame);
+      // Over the window: wait for an ack (one frame always goes, or nothing would).
+      if (this.inflight.length > 0 && (this.inflight.length >= flow.frames || this.inflightBytes + size > flow.bytes)) return;
+      sendFrame(ws, frame);
+      this.inflight.push(size);
+      this.inflightBytes += size;
+      if (++head.sent === head.parts.length) this.queue.shift();
+    }
   }
 
   private attach(ws: WebSocket): void {
     this.socket?.close(4000, "replaced");
     this.socket = ws;
+    this.incoming = "";
+    this.inflight = [];
+    this.inflightBytes = 0;
+    // A message cut by the last connection goes again whole.
+    if (this.queue[0]) this.queue[0].sent = 0;
+    // A plugin that does flow control says so first; an older one never does.
+    this.flow = undefined;
+    clearTimeout(this.flowTimer);
+    this.flowTimer = setTimeout(() => {
+      if (this.socket === ws && this.flow === undefined) {
+        this.flow = null;
+        this.pump();
+      }
+    }, 1000);
     ws.on("message", (data) => this.receive(data.toString()));
-    ws.on("close", () => {
+    ws.on("close", (code, reason) => {
       if (this.socket === ws) {
         this.socket = undefined;
+        clearTimeout(this.flowTimer);
+        if (this.queue[0]) this.queue[0].sent = 0;
+        console.log(`[zoo] connection closed (${code}${reason.length ? " " + reason.toString() : ""}) at ${new Date().toISOString()}`);
         this.emit("disconnected");
       }
     });
-    for (const text of this.queue.splice(0)) sendFrame(ws, text);
     this.emit("connected");
   }
 
@@ -174,6 +261,23 @@ export class Bridge extends EventEmitter<BridgeEvents> {
       return;
     }
     switch (msg.t) {
+      case "flow":
+        this.flow = { frames: Math.max(1, msg.frames), bytes: Math.max(4096, msg.bytes), part: Math.max(4096, msg.part) };
+        clearTimeout(this.flowTimer);
+        this.pump();
+        break;
+      case "ack":
+        for (let i = 0; i < msg.n && this.inflight.length > 0; i++) this.inflightBytes -= this.inflight.shift()!;
+        this.pump();
+        break;
+      case "part":
+        this.incoming += msg.data;
+        if (msg.last) {
+          const whole = this.incoming;
+          this.incoming = "";
+          this.receive(whole);
+        }
+        break;
       case "webview":
         this.emit("webview", msg.msg);
         break;

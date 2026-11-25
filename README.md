@@ -100,7 +100,8 @@ ripgrep are used; otherwise the plugin downloads what is missing, once you agree
    The package is unsigned unless built with a key: the install page says so.
 2. Approve the capabilities (`process:node` runs the sidecar; `net:127.0.0.1` reaches it).
 3. Open the **Zoo Bridge** tool window: it starts the extension host when it is not running (turn
-   off *autoStart* to start it yourself with *Start extension host*). Configure a provider in Zoo Code.
+   off *autoStart* to start it yourself with *Start extension host*; *autoStartDelay* waits that many
+   milliseconds first). Configure a provider in Zoo Code.
 
 No setting is needed: the sidecar is built into the plugin and written to its data directory.
 Stopping the extension host keeps it stopped until you start it again or reopen the tool window.

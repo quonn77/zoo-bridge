@@ -30,6 +30,22 @@
 
   function hello() {
     send({ type: "zoo-bridge/hello", page: pageId });
+    // No answer (the plugin is restarting after a call over the host's time
+    // limit): ask again rather than stay "connecting".
+    clearTimeout(retry);
+    retry = setTimeout(hello, 8000);
+  }
+
+  // The tool window just opened: once the first answer says the extension
+  // host is not running, ask the plugin to start it (autoStart setting).
+  // Once per page, so a stopped or closed host stays stopped; a little later
+  // than the hello, as opening its terminal can be slow while the window is
+  // still starting.
+  let autostartAsked = false;
+  function autostart(next) {
+    if (autostartAsked) return;
+    autostartAsked = true;
+    if (next === "offline") setTimeout(() => send({ type: "zoo-bridge/autostart", page: pageId }), 1500);
   }
 
   /** The message inside a plugin envelope when it is for this page, else null. */
@@ -47,6 +63,7 @@
     const was = state;
     state = next;
     clearTimeout(retry);
+    autostart(next);
     if (next === "connected") {
       // Where the extension and ripgrep stand (zoo-bridge/extension, /ripgrep).
       if (was !== "connected") send({ type: "zoo-bridge/deps" });

@@ -36,6 +36,9 @@ const DRAIN_LIMIT: u32 = 32;
 pub struct ZooCode {
     /// Connected sidecars by project key.
     conns: std::collections::BTreeMap<String, WebSocket>,
+    /// Their projects: the sidecar's notifications show in that project's
+    /// window only (the WebSocket events that carry them have no window).
+    projects: std::collections::BTreeMap<String, host::Project>,
 }
 
 /// A short stable key for a project root (FNV-1a of the root).
@@ -261,6 +264,11 @@ impl ZooCode {
             Some(path) => cmd.env("ZOO_EXTENSION", &path),
             None => cmd,
         };
+        // The window answers once the terminal runs, which in a window that is
+        // still starting (or right after OpenIDEA starts) takes more than the
+        // 5 s a plugin call may last: the host then restarts the plugin. An
+        // open task gives the call up to 60 s, and shows in the status bar.
+        let _task = host::begin_task(&format!("Starting Zoo Code extension host — {name}"), false);
         host::open_terminal_session(&terminal_key(&key), &format!("Zoo Code Extension Host — {name}"), &cmd)?;
         Ok(key)
     }
@@ -287,6 +295,7 @@ impl ZooCode {
                     let _ = host::subscribe(kind);
                 }
                 self.conns.insert(key.clone(), ws);
+                self.projects.insert(key.clone(), project);
                 Ok(Some(key))
             }
             Err(_) => Ok(None),
@@ -345,7 +354,14 @@ impl ZooCode {
                             "warning" => NotificationLevel::Warning,
                             _ => NotificationLevel::Info,
                         };
-                        host::notify(level, "Zoo Bridge", &message);
+                        // host::notify would show it in the focused window,
+                        // whichever project that is.
+                        match self.projects.get(&key) {
+                            Some(project) => {
+                                let _ = project.notify(level, "Zoo Bridge", &message, &[]);
+                            }
+                            None => host::notify(level, "Zoo Bridge", &message),
+                        }
                     }
                     Some(Inbound::Ping) | None => {}
                 }
@@ -468,6 +484,22 @@ impl ZooCode {
                     Some(_) => status(&key, page.as_deref(), "connected", ""),
                     None => status(&key, page.as_deref(), "offline", "Zoo Code extension host not running"),
                 }
+            }
+            // The tool window opened with the sidecar offline (sent once per
+            // page, a moment after its hello): start it unless autoStart is
+            // off. Not part of the hello: opening the terminal can take
+            // seconds in a window that is still starting, and a call over
+            // the host's limit restarts the plugin.
+            Some("zoo-bridge/autostart") => {
+                let (key, connected) = self.keys(ctx)?;
+                if connected.is_some() || !host::setting_bool("autoStart").unwrap_or(true) {
+                    return Ok(());
+                }
+                let key = self.start_sidecar(ctx).inspect_err(|e| {
+                    let _ = status(&key, page.as_deref(), "offline", &e.to_string());
+                })?;
+                let state = if self.conns.contains_key(&key) { "connected" } else { "starting" };
+                status(&key, None, state, "")
             }
             Some("zoo-bridge/dismiss-notice") => host::storage::set(NOTICE_HIDDEN_KEY, "1"),
             // An IDE request of the sidecar relayed by the page (see run_ide).
@@ -645,6 +677,32 @@ mod tests {
             let key = super::terminal_key(&super::project_key(root));
             assert!(host.finish_terminal(&key).is_some(), "no sidecar session {key} for {root}");
         }
+    }
+
+    /// Opening the tool window starts the sidecar (the page's autostart,
+    /// apart from its hello), unless autoStart is off; hellos never do.
+    #[test]
+    fn opening_the_tool_window_starts_the_sidecar() {
+        use openidea_plugin::mock::MockHost;
+        let host = MockHost::install().with_capabilities(&["storage", "project.read", "process:node"]);
+        host.set_setting("sidecarScript", "\"/dev/sidecar/main.js\"");
+        let mut plugin = super::ZooCode::default();
+        let mut send = |root: &str, kind: &str| {
+            host.set_project_root(Some(root));
+            let before = host.view_messages().len();
+            let msg = format!(r#"{{"type":"zoo-bridge/{kind}","page":"p"}}"#);
+            plugin.handle(super::VIEW, ViewEvent::Message(msg), &host.invocation()).unwrap();
+            let state = host.view_messages().get(before).map(|(_, m)| {
+                let v: serde_json::Value = serde_json::from_str(m).unwrap();
+                v["msg"]["state"].as_str().unwrap_or_default().to_owned()
+            });
+            let started = host.finish_terminal(&super::terminal_key(&super::project_key(root))).is_some();
+            (state.unwrap_or_default(), started)
+        };
+        assert_eq!(send("/work/alpha", "hello"), ("offline".into(), false), "a hello never starts it");
+        assert_eq!(send("/work/alpha", "autostart"), ("starting".into(), true));
+        host.set_setting("autoStart", "false");
+        assert_eq!(send("/work/beta", "autostart"), (String::new(), false), "autoStart off");
     }
 
     /// A release must pin the VSIX of the very Zoo Code version whose UI it

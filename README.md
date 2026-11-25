@@ -99,14 +99,16 @@ ripgrep are used; otherwise the plugin downloads what is missing, once you agree
 1. Settings › Plugins › *Install Plugin from Package File…* → `quonn77.zoo-bridge-<version>.oiplugin`.
    The package is unsigned unless built with a key: the install page says so.
 2. Approve the capabilities (`process:node` runs the sidecar; `net:127.0.0.1` reaches it).
-3. Open the **Zoo Bridge** tool window, *Start extension host*, configure a provider in Zoo Code.
+3. Open the **Zoo Bridge** tool window: it starts the extension host when it is not running (turn
+   off *autoStart* to start it yourself with *Start extension host*). Configure a provider in Zoo Code.
 
 No setting is needed: the sidecar is built into the plugin and written to its data directory.
+Stopping the extension host keeps it stopped until you start it again or reopen the tool window.
 
 **More windows.** Each open project has its own extension host (one Node.js process with Zoo Code,
 started from that project's window): Zoo Bridge in a window works on that window's project. Zoo
 Code's settings, API keys and task history are shared by all projects; the processes merge their
-changes instead of overwriting each other's.
+changes instead of overwriting each other's. Its notifications show in that project's window only.
 
 ### Where the extension comes from
 
